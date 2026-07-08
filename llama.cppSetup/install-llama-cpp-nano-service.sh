@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-SERVICE_USER="$(whoami)"
+SERVICE_USER="${SUDO_USER:-$(whoami)}"
 SERVICE_PORT="8081"   # deliberately NOT 8080, to avoid clashing with the
                       # whisper.cpp server already bound to 127.0.0.1:8080
 MODEL_HF="ggml-org/gemma-3-1b-it-GGUF"

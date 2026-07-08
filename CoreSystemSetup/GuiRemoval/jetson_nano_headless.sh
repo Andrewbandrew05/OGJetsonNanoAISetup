@@ -16,12 +16,26 @@
 # Usage:
 #   chmod +x jetson_nano_headless.sh
 #   sudo ./jetson_nano_headless.sh
+#   sudo ./jetson_nano_headless.sh --yes   # skip the confirmation prompt
+#
+# Non-interactive: set NANO_SETUP_AUTO_YES_OS=1 (what setup.sh's
+# --bypassAllChecks does) to skip the confirmation the same way --yes does.
 #
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root (use sudo)." >&2
   exit 1
+fi
+
+AUTO_YES=0
+for arg in "$@"; do
+  case "$arg" in
+    -y|--yes) AUTO_YES=1 ;;
+  esac
+done
+if [[ "${NANO_SETUP_AUTO_YES_OS:-0}" == "1" ]]; then
+  AUTO_YES=1
 fi
 
 LOGFILE="/var/log/jetson_headless_$(date +%Y%m%d_%H%M%S).log"
@@ -38,10 +52,14 @@ echo "It will NOT remove nvidia-l4t-* packages (CUDA/GPU/driver stack)."
 echo "A full package list backup will be saved to: $BACKUP_LIST"
 echo "A log of everything done will be saved to: $LOGFILE"
 echo
-read -rp "Continue? Type 'yes' to proceed: " CONFIRM
-if [[ "$CONFIRM" != "yes" ]]; then
-  echo "Aborted."
-  exit 0
+if [[ $AUTO_YES -eq 1 ]]; then
+  echo "Continue? Type 'yes' to proceed: yes (auto-accepted)"
+else
+  read -rp "Continue? Type 'yes' to proceed: " CONFIRM
+  if [[ "$CONFIRM" != "yes" ]]; then
+    echo "Aborted."
+    exit 0
+  fi
 fi
 
 exec > >(tee -a "$LOGFILE") 2>&1
