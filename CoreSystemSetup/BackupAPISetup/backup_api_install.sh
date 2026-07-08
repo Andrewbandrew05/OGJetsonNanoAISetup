@@ -22,7 +22,30 @@
 #   chmod +x backup_api_install.sh
 #   sudo ./backup_api_install.sh
 #
+# Non-interactive usage: this script asks for a remote backup target, since
+# there's no sane default for someone else's storage. Set these env vars to
+# skip the prompts:
+#   NANO_BACKUP_TARGET=ssh|s3
+#   # ssh target:
+#   NANO_BACKUP_SSH_HOST=<ip-or-tailscale-hostname>
+#   NANO_BACKUP_SSH_USER=<remote-ssh-user>
+#   NANO_BACKUP_SSH_PATH=<remote-path e.g. /mnt/backups/jetson-nano>
+#   # s3 target:
+#   NANO_BACKUP_S3_BUCKET=<bucket>
+#   NANO_BACKUP_S3_ENDPOINT=<endpoint, blank for AWS S3>
+#   NANO_BACKUP_S3_ACCESS_KEY=<access key id>
+#   NANO_BACKUP_S3_SECRET_KEY=<secret access key>
+#
+# If NANO_SETUP_AUTO_YES/NANO_SETUP_AUTO_YES_OS is set (setup.sh's
+# --bypassAllChecks/--bypassInstallerChecks) and NANO_BACKUP_TARGET is not
+# set, this script fails fast with an error instead of hanging on a prompt.
+#
 set -euo pipefail
+
+AUTO_YES=0
+if [[ "${NANO_SETUP_AUTO_YES:-0}" == "1" || "${NANO_SETUP_AUTO_YES_OS:-0}" == "1" ]]; then
+  AUTO_YES=1
+fi
 
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root (use sudo)." >&2
@@ -58,17 +81,41 @@ restic version
 
 # --- Repository configuration ---
 echo
-echo "Where should backups be stored?"
-echo "  1) Remote machine over Tailscale/SSH (SFTP)"
-echo "  2) S3-compatible storage (e.g. Backblaze B2, AWS S3, MinIO)"
-read -rp "Choose [1/2]: " REPO_CHOICE
+if [[ -n "${NANO_BACKUP_TARGET:-}" ]]; then
+  case "${NANO_BACKUP_TARGET}" in
+    ssh) REPO_CHOICE="1" ;;
+    s3) REPO_CHOICE="2" ;;
+    *)
+      echo "[!] NANO_BACKUP_TARGET must be 'ssh' or 's3', got: ${NANO_BACKUP_TARGET}" >&2
+      exit 1
+      ;;
+  esac
+  echo "[*] NANO_BACKUP_TARGET=${NANO_BACKUP_TARGET} - skipping storage prompt."
+elif [[ $AUTO_YES -eq 1 ]]; then
+  echo "[!] Non-interactive run but no NANO_BACKUP_TARGET env var set." >&2
+  echo "    Set NANO_BACKUP_TARGET=ssh|s3 plus the matching NANO_BACKUP_* vars" >&2
+  echo "    (see the usage comment at the top of this script), or run it by" >&2
+  echo "    itself interactively instead." >&2
+  exit 1
+else
+  echo "Where should backups be stored?"
+  echo "  1) Remote machine over Tailscale/SSH (SFTP)"
+  echo "  2) S3-compatible storage (e.g. Backblaze B2, AWS S3, MinIO)"
+  read -rp "Choose [1/2]: " REPO_CHOICE
+fi
 
 RESTIC_PASSWORD=$(openssl rand -base64 32)
 
 if [[ "$REPO_CHOICE" == "1" ]]; then
-  read -rp "Remote host (IP or Tailscale hostname): " REMOTE_HOST
-  read -rp "Remote SSH user: " REMOTE_USER
-  read -rp "Remote path for backups (e.g. /mnt/backups/jetson-nano): " REMOTE_PATH
+  if [[ -n "${NANO_BACKUP_TARGET:-}" ]]; then
+    REMOTE_HOST="${NANO_BACKUP_SSH_HOST:?NANO_BACKUP_SSH_HOST is required when NANO_BACKUP_TARGET=ssh}"
+    REMOTE_USER="${NANO_BACKUP_SSH_USER:?NANO_BACKUP_SSH_USER is required when NANO_BACKUP_TARGET=ssh}"
+    REMOTE_PATH="${NANO_BACKUP_SSH_PATH:?NANO_BACKUP_SSH_PATH is required when NANO_BACKUP_TARGET=ssh}"
+  else
+    read -rp "Remote host (IP or Tailscale hostname): " REMOTE_HOST
+    read -rp "Remote SSH user: " REMOTE_USER
+    read -rp "Remote path for backups (e.g. /mnt/backups/jetson-nano): " REMOTE_PATH
+  fi
 
   KEYFILE="/root/.ssh/id_ed25519_backup"
   mkdir -p /root/.ssh && chmod 700 /root/.ssh
@@ -100,14 +147,26 @@ EOF
   echo
   cat "${KEYFILE}.pub"
   echo
-  read -rp "Press Enter once that's done to continue..." _
+  if [[ -n "${NANO_BACKUP_TARGET:-}" ]]; then
+    echo "[*] Non-interactive run: assuming the key above is already authorized"
+    echo "    on the remote host, and continuing without pausing."
+  else
+    read -rp "Press Enter once that's done to continue..." _
+  fi
 
 elif [[ "$REPO_CHOICE" == "2" ]]; then
-  read -rp "Bucket name: " S3_BUCKET
-  read -rp "Endpoint (blank for AWS S3, or e.g. s3.us-west-000.backblazeb2.com): " S3_ENDPOINT
-  read -rp "Access Key ID: " AWS_ACCESS_KEY_ID
-  read -rsp "Secret Access Key: " AWS_SECRET_ACCESS_KEY
-  echo
+  if [[ -n "${NANO_BACKUP_TARGET:-}" ]]; then
+    S3_BUCKET="${NANO_BACKUP_S3_BUCKET:?NANO_BACKUP_S3_BUCKET is required when NANO_BACKUP_TARGET=s3}"
+    S3_ENDPOINT="${NANO_BACKUP_S3_ENDPOINT:-}"
+    AWS_ACCESS_KEY_ID="${NANO_BACKUP_S3_ACCESS_KEY:?NANO_BACKUP_S3_ACCESS_KEY is required when NANO_BACKUP_TARGET=s3}"
+    AWS_SECRET_ACCESS_KEY="${NANO_BACKUP_S3_SECRET_KEY:?NANO_BACKUP_S3_SECRET_KEY is required when NANO_BACKUP_TARGET=s3}"
+  else
+    read -rp "Bucket name: " S3_BUCKET
+    read -rp "Endpoint (blank for AWS S3, or e.g. s3.us-west-000.backblazeb2.com): " S3_ENDPOINT
+    read -rp "Access Key ID: " AWS_ACCESS_KEY_ID
+    read -rsp "Secret Access Key: " AWS_SECRET_ACCESS_KEY
+    echo
+  fi
   if [[ -n "$S3_ENDPOINT" ]]; then
     RESTIC_REPOSITORY="s3:https://${S3_ENDPOINT}/${S3_BUCKET}"
   else
