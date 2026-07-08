@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+#
+# install-whisper-cpp.sh
+#
+# Builds whisper.cpp v1.5.4 with CUDA (cuBLAS) support on an original
+# Jetson Nano (Maxwell GPU, compute capability 5.3, CUDA 10.2) and installs
+# it as a systemd service.
+#
+# Target: JetPack 4.6.x, Ubuntu 18.04 (Bionic), CUDA 10.2, aarch64.
+# Will NOT work as-is on Jetson Orin/Xavier (different compute capability --
+# change CUDA_ARCH below) or newer JetPack/CUDA versions (the patches in this
+# script work around bugs specific to old GCC/CUDA combos and may not be
+# needed, or may need adjusting, on newer systems).
+#
+# See README.md in this repo for a full explanation of why each patch below
+# is necessary.
+
+set -euo pipefail
+
+WHISPER_DIR="/opt/whisper.cpp"
+WHISPER_VERSION="v1.5.4"
+CUDA_ARCH="sm_53"          # Jetson Nano (original). Orin Nano = sm_87, Xavier = sm_72.
+MODEL="base.en"            # tiny.en / base.en / small.en / medium.en ...
+SERVICE_USER="${SUDO_USER:-$USER}"
+SERVER_PORT="8080"
+
+echo "==> [1/7] Installing build dependencies"
+sudo apt update
+sudo apt install -y build-essential git gcc-9 g++-9 python3
+
+echo "==> [2/7] Verifying CUDA toolkit is present"
+if [ ! -x /usr/local/cuda/bin/nvcc ]; then
+  echo "ERROR: nvcc not found at /usr/local/cuda/bin/nvcc."
+  echo "Install the CUDA toolkit (comes with JetPack) before running this script."
+  exit 1
+fi
+export PATH="/usr/local/cuda/bin:$PATH"
+nvcc --version
+
+echo "==> [3/7] Cloning whisper.cpp ${WHISPER_VERSION} into ${WHISPER_DIR}"
+sudo mkdir -p "$WHISPER_DIR"
+sudo chown "$SERVICE_USER":"$SERVICE_USER" "$WHISPER_DIR"
+if [ ! -d "$WHISPER_DIR/.git" ]; then
+  git clone https://github.com/ggerganov/whisper.cpp "$WHISPER_DIR"
+fi
+cd "$WHISPER_DIR"
+git fetch --tags
+git checkout "$WHISPER_VERSION"
+git reset --hard
+git clean -fdx
+
+echo "==> [4/7] Patching Makefile"
+
+# --- Patch A ---------------------------------------------------------------
+# Bug: the ggml-cuda.o rule/recipe is defined *inside* an
+# "ifdef WHISPER_CUBLAS ... endif" block. On GNU Make 4.1 (Jetson's default),
+# a rule defined inside a conditional can cause Make's recipe-parsing state
+# to leak past the "endif" and swallow a later, unrelated tab-indented
+# variable assignment elsewhere in the file as if it were a shell command.
+# Symptom: "make: CFLAGS: Command not found" pointing at the ggml-cuda.o
+# recipe line, even though that line is untouched.
+# Fix: relocate the aarch64 "-mcpu=native" block earlier in the file, before
+# any rule is defined inside a conditional block.
+python3 - << 'PYEOF'
+import re
+path = "Makefile"
+text = open(path).read()
+
+block_re = re.compile(
+    r"\nifneq \(\$\(filter aarch64%,\$\(UNAME_M\)\),\)\n"
+    r"\tCFLAGS   \+= -mcpu=native\n"
+    r"\tCXXFLAGS \+= -mcpu=native\nendif\n"
+)
+m = block_re.search(text)
+if m:
+    block = m.group(0)
+    text = text[:m.start()] + "\n" + text[m.end():]
+    text = text.replace("\nifdef WHISPER_OPENBLAS\n", block + "\nifdef WHISPER_OPENBLAS\n", 1)
+    open(path, "w").write(text)
+    print("  Patch A applied: relocated -mcpu=native block")
+else:
+    print("  Patch A skipped: block not found in expected form (already patched?)")
+PYEOF
+
+# --- Patch B ---------------------------------------------------------------
+# Bug: nvcc has its own "-m<bitwidth>" option family (e.g. -m64) and
+# intercepts anything starting with "-m" before handing args off via
+# --forward-unknown-to-host-compiler. So "-mcpu=native" (needed for plain
+# gcc/g++ builds) breaks nvcc specifically with:
+# "nvcc fatal : 'cpu=native': expected a number"
+# Fix: strip -mcpu=native only from the flags passed to nvcc's recipe.
+if grep -q '\$(NVCC) \$(NVCCFLAGS) \$(CXXFLAGS) -Wno-pedantic -c \$< -o \$@' Makefile; then
+  sed -i 's|\$(NVCC) \$(NVCCFLAGS) \$(CXXFLAGS) -Wno-pedantic -c \$< -o \$@|$(NVCC) $(NVCCFLAGS) $(filter-out -mcpu=native,$(CXXFLAGS)) -Wno-pedantic -c $< -o $@|' Makefile
+  echo "  Patch B applied: stripped -mcpu=native from nvcc recipe"
+else
+  echo "  Patch B skipped: nvcc recipe line not found in expected form (already patched?)"
+fi
+
+echo "==> [5/7] Building (this takes several minutes on Jetson Nano -- be patient)"
+# gcc-9 is required, not gcc-7 (Bionic's default) or gcc-8: ggml-quants.c
+# uses NEON multi-vector load intrinsics (vld1q_s8_x4, vld1q_u8_x4) that
+# were only added to GCC's ARM NEON headers in GCC 9.
+make -j1 server main WHISPER_CUBLAS=1 CUDA_ARCH_FLAG="$CUDA_ARCH" CC=gcc-9 CXX=g++-9
+
+echo "==> [6/7] Downloading model: ${MODEL}"
+bash ./models/download-ggml-model.sh "$MODEL"
+
+echo "==> [7/7] Cleaning up build artifacts"
+rm -f *.o
+
+echo "==> Installing systemd service (whisper-cpp-server.service)"
+sudo tee /etc/systemd/system/whisper-cpp-server.service > /dev/null << EOF
+[Unit]
+Description=whisper.cpp CUDA STT server
+After=network.target
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+WorkingDirectory=${WHISPER_DIR}
+Environment="PATH=/usr/local/cuda/bin:/usr/bin:/bin"
+Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64"
+ExecStart=${WHISPER_DIR}/server -m ${WHISPER_DIR}/models/ggml-${MODEL}.bin --host 127.0.0.1 --port ${SERVER_PORT} --best-of 1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now whisper-cpp-server.service
+sleep 3
+
+echo ""
+echo "==> Service status:"
+sudo systemctl status whisper-cpp-server.service --no-pager || true
+
+echo ""
+echo "Done. whisper.cpp CUDA server is running at http://127.0.0.1:8080 (localhost only)."
+echo "Test it with a wav file:"
+echo "  curl 127.0.0.1:${SERVER_PORT}/inference -H \"Content-Type: multipart/form-data\" -F file=@/path/to/your.wav -F response_format=text"
