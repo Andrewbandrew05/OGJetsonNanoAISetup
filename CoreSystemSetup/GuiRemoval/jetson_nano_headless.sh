@@ -12,6 +12,15 @@
 #  - Backs up the installed package list before purging anything.
 #  - Requires an explicit "yes" confirmation before making changes.
 #  - Meant to be run over SSH, not from the desktop session itself.
+#  - Before running the purge AND before running autoremove, simulates the
+#    command first and checks the proposed removal list against a denylist
+#    of boot-critical packages (kernel, initramfs-tools, nvidia-l4t-*,
+#    systemd, dbus, network-manager, openssh, etc). If anything on that
+#    list would be removed, that step is skipped entirely rather than
+#    trusting apt's dependency solver blindly. (An earlier version of this
+#    script ran `apt-get autoremove --purge` unconditionally, with no such
+#    check - on real hardware this cascaded into removing far more than
+#    the targeted GUI packages and left the board unable to boot.)
 #
 # Usage:
 #   chmod +x jetson_nano_headless.sh
@@ -69,6 +78,61 @@ dpkg -l > "$BACKUP_LIST"
 
 echo "[*] Setting default boot target to multi-user (text console)..."
 systemctl set-default multi-user.target
+
+# --- Safety net for the purge/autoremove steps below ---
+# Patterns for packages that must never be removed, no matter what apt's
+# dependency solver decides is "no longer needed". This exists because an
+# unconditional `apt-get autoremove --purge` previously cascaded into
+# removing boot-critical packages on real hardware.
+CRITICAL_PATTERNS=(
+  "linux-image*" "linux-headers*" "linux-modules*" "linux-firmware*"
+  "nvidia-l4t-*" "nvidia-*" "tegra*" "cuda-*" "l4t-*"
+  "initramfs-tools*" "u-boot*" "flash-tools*" "extlinux*" "grub*"
+  "systemd" "systemd-sysv" "udev" "dbus" "network-manager"
+  "openssh-server" "openssh-client" "openssh-sftp-server"
+  "sudo" "e2fsprogs" "util-linux" "mount" "coreutils" "bash"
+  "dpkg" "apt" "apt-utils" "libc6" "libc-bin"
+)
+
+is_critical_package() {
+  local pkg="$1" pat
+  for pat in "${CRITICAL_PATTERNS[@]}"; do
+    # shellcheck disable=SC2053
+    [[ "$pkg" == $pat ]] && return 0
+  done
+  return 1
+}
+
+# Simulates a purge/autoremove command (never touches the system), logs the
+# full set of packages it would remove, and returns non-zero instead of
+# letting the caller run the real command if anything on CRITICAL_PATTERNS
+# shows up in that set.
+simulate_and_guard() {
+  local description="$1"; shift
+  local sim_output candidates pkg
+  local critical_hits=()
+  sim_output=$("$@" 2>&1) || true
+  candidates=$(echo "$sim_output" | grep -E '^(Remv|Purg) ' | awk '{print $2}')
+  if [[ -z "$candidates" ]]; then
+    echo "[*] ${description}: nothing would be removed."
+    return 0
+  fi
+  echo "[*] ${description}: would remove the following package(s):"
+  echo "$candidates" | sed 's/^/    /'
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    if is_critical_package "$pkg"; then
+      critical_hits+=("$pkg")
+    fi
+  done <<< "$candidates"
+  if [[ ${#critical_hits[@]} -gt 0 ]]; then
+    echo "[!] SAFETY ABORT for '${description}': this would also remove critical package(s):"
+    printf '    %s\n' "${critical_hits[@]}"
+    echo "[!] Skipping this step entirely rather than risk an unbootable system."
+    return 1
+  fi
+  return 0
+}
 
 # List of GUI/desktop-related package name patterns to purge.
 # Uses wildcard matching via apt-get; nvidia-l4t-* is explicitly excluded
@@ -128,19 +192,33 @@ done
 if [[ ${#INSTALLED_MATCHES[@]} -eq 0 ]]; then
   echo "[*] No matching GUI packages found installed. Skipping purge step."
 else
-  echo "[*] The following packages will be purged:"
+  echo "[*] The following packages were matched for removal:"
   printf '    %s\n' "${INSTALLED_MATCHES[@]}"
-  echo "[*] Purging..."
-  apt-get purge -y "${INSTALLED_MATCHES[@]}" || {
-    echo "[!] Some packages failed to purge individually; retrying one-by-one..."
-    for pkg in "${INSTALLED_MATCHES[@]}"; do
-      apt-get purge -y "$pkg" || echo "    [!] Failed to purge $pkg, skipping."
-    done
-  }
+  if simulate_and_guard "GUI package purge" apt-get purge -s "${INSTALLED_MATCHES[@]}"; then
+    echo "[*] Purging..."
+    apt-get purge -y "${INSTALLED_MATCHES[@]}" || {
+      echo "[!] Some packages failed to purge individually; retrying one-by-one..."
+      for pkg in "${INSTALLED_MATCHES[@]}"; do
+        apt-get purge -y "$pkg" || echo "    [!] Failed to purge $pkg, skipping."
+      done
+    }
+  else
+    echo "[!] Skipped the GUI package purge for safety - see SAFETY ABORT above."
+    echo "    Nothing was removed. Review the flagged package(s) manually before"
+    echo "    purging anything yourself."
+  fi
 fi
 
-echo "[*] Removing orphaned dependencies..."
-apt-get autoremove -y --purge
+echo "[*] Checking for orphaned dependencies before touching anything..."
+if simulate_and_guard "autoremove" apt-get autoremove --purge -s; then
+  echo "[*] Removing orphaned dependencies..."
+  apt-get autoremove -y --purge
+else
+  echo "[!] Skipped autoremove for safety - see SAFETY ABORT above."
+  echo "    You can review that list yourself and run"
+  echo "    'sudo apt-get autoremove --purge' manually if you're confident"
+  echo "    it's safe once you've checked exactly what it wants to remove."
+fi
 
 echo "[*] Cleaning apt cache..."
 apt-get autoclean -y
