@@ -141,8 +141,8 @@ declare -A CORE_LABEL=(
 )
 declare -A CORE_PATH=(
   [gui]="CoreSystemSetup/GuiRemoval/jetson_nano_headless.sh"
-  [python39]="CoreSystemSetup/python39_upgrade.sh"
-  [gcc9]="CoreSystemSetup/gcc9_upgrade.sh"
+  [python39]="CoreSystemSetup/Python39Upgrade/python39_upgrade.sh"
+  [gcc9]="CoreSystemSetup/Gcc9Upgrade/gcc9_upgrade.sh"
   [swap]="CoreSystemSetup/SwapFileCreation/swap_setup.sh"
   [jtop]="CoreSystemSetup/JtopInstallation/jtop_install.sh"
   [sshharden]="CoreSystemSetup/SSHHardener/ssh_harden.sh"
