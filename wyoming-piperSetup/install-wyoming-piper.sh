@@ -18,6 +18,14 @@
 # (archived Oct 2025, but still functional and still the backend
 # wyoming-piper expects) was built years ago against an older glibc
 # baseline and works fine here. See README.md for details.
+#
+# Why wyoming-piper is pinned to v1.6.3, not main: commit a9bedf7 ("Use
+# piper1-gpl") removed the --piper <path> flag entirely and switched
+# wyoming-piper to import piper1-gpl as a library instead of shelling out
+# to an external binary - which drags the same glibc 2.28+ requirement
+# back in. v1.6.3 is the last tag before that change; v2.0.0 is the first
+# tag with it. Cloning main (unpinned) will build a service that
+# immediately crash-loops with "unrecognized arguments: --piper ...".
 
 set -euo pipefail
 
@@ -49,12 +57,19 @@ if [ ! -x "$PIPER_DIR/piper/piper" ]; then
 fi
 "$PIPER_DIR/piper/piper" --version || echo "  (no --version output -- binary may still be fine, will confirm via wyoming-piper next)"
 
-echo "==> [4/6] Cloning wyoming-piper and setting up its venv with Python 3.9"
+echo "==> [4/6] Cloning wyoming-piper (pinned to v1.6.3) and setting up its venv with Python 3.9"
 cd "$PIPER_DIR"
 if [ ! -d "$PIPER_DIR/wyoming-piper/.git" ]; then
   git clone https://github.com/rhasspy/wyoming-piper.git
 fi
 cd wyoming-piper
+git config --global --add safe.directory "$PIPER_DIR/wyoming-piper"
+git fetch --tags
+git checkout v1.6.3
+# Wipe any venv from a previous run against a different (e.g. main/v2.x)
+# checkout, so it gets rebuilt against v1.6.3's actual requirements rather
+# than possibly keeping stray piper1-gpl/onnxruntime packages around.
+rm -rf .venv
 python3.9 script/setup
 
 echo "==> [5/6] Checking wyoming-piper's actual CLI flags"
