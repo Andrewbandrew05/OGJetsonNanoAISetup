@@ -100,7 +100,18 @@ class WhisperCppBridgeHandler(AsyncEventHandler):
             timeout=120,
         )
         response.raise_for_status()
-        return response.text.strip()
+        text = response.text.strip()
+        # whisper.cpp's server doesn't always honor response_format=text and
+        # falls back to its default JSON body ({"text": "..."}) instead -
+        # unwrap that rather than passing the raw JSON through as the
+        # transcript when that happens.
+        content_type = response.headers.get("content-type", "")
+        if "json" in content_type or text.startswith("{"):
+            try:
+                text = str(response.json().get("text", text)).strip()
+            except ValueError:
+                pass
+        return text
 
 
 async def main() -> None:
