@@ -47,12 +47,28 @@ sudo ./setup.sh --installAll --bypassAllChecks
 
 This runs core system setup (Python 3.9 + gcc-9 build-toolchain fixes,
 swap, jtop, SSH hardening, GUI disabled but **not** uninstalled) + llama.cpp
-+ whisper.cpp + wyoming-piper + a system package upgrade + Tailscale, fully
-unattended. Each script automatically retries itself once if it hits a
-transient failure (a flaky network blip during a download, etc.), so this
-is safe to kick off inside `tmux` and walk away from. The one thing that
-actually waits for you: Tailscale runs last and ends by blocking on
++ whisper.cpp + a Wyoming-whisper bridge (for HA - see below) +
+wyoming-piper + a system package upgrade + Tailscale, fully unattended.
+Each script automatically retries itself once if it hits a transient
+failure (a flaky network blip during a download, etc.), so this is safe
+to kick off inside `tmux` and walk away from. The one thing that actually
+waits for you: Tailscale runs last and ends by blocking on
 `tailscale up`'s login URL, so that's what you'll come back to.
+
+### Default ports
+
+| Service | Port | Notes |
+|---|---|---|
+| llama.cpp | 8081 | `http://<nano-ip>:8081` - OpenAI-compatible API + web UI. Binds all interfaces, no auth - see `llama.cppSetup/README.md`. |
+| whisper.cpp | 8080 | `http://127.0.0.1:8080` - plain REST API, localhost-only, **not** the Wyoming protocol. |
+| Wyoming-whisper bridge | 10300 | `tcp://<nano-ip>:10300` - Wyoming protocol wrapper in front of whisper.cpp, for HA's Wyoming integration. See `wyoming-whisperSetup/README.md`. |
+| wyoming-piper | 10200 | `tcp://<nano-ip>:10200` - Wyoming protocol, HA-ready directly. |
+| Backup + control API | 8843 | `http://<tailscale-ip>:8843` - Tailscale-only until Tailscale is up, then falls back to `127.0.0.1`. |
+
+Every port above is overridable - `--llamaPort=`, `--whisperPort=`,
+`--wyomingWhisperPort=`, `--piperPort=`, `--backupApiPort=` (each only
+applies if that service is actually being installed in the same run). See
+`sudo ./setup.sh --help` for the full reference.
 
 This intentionally leaves out two things that need information only you
 have:
@@ -88,9 +104,9 @@ sudo ./setup.sh --installAll --installBackupAPI --purgeGuiPackages --bypassAllCh
 ### Picking and choosing
 
 Every script under `CoreSystemSetup/`, `llama.cppSetup/`, `whisper.cppSetup/`,
-and `wyoming-piperSetup/` also works completely standalone
-(`sudo ./script.sh`), if you'd rather run things one at a time instead of
-through `setup.sh`.
+`wyoming-whisperSetup/`, and `wyoming-piperSetup/` also works completely
+standalone (`sudo ./script.sh`), if you'd rather run things one at a time
+instead of through `setup.sh`.
 
 Run `sudo ./setup.sh` with no arguments at all for an interactive
 installer: it prints the full flag reference, a numbered menu of every

@@ -31,12 +31,14 @@
 # Package flags (combinable - selecting the same script via more than one
 # flag runs it once, not twice):
 #   --installAll          Core system setup + llama.cpp + whisper.cpp +
-#                          wyoming-piper + system package upgrade +
-#                          Tailscale (upgrade then Tailscale always last,
-#                          in that order). Does NOT include the backup API
-#                          (needs your own remote storage details) - add
-#                          --installBackupAPI too if you want it.
-#   --installModels        llama.cpp + whisper.cpp + wyoming-piper only.
+#                          Wyoming-whisper bridge + wyoming-piper + system
+#                          package upgrade + Tailscale (upgrade then
+#                          Tailscale always last, in that order). Does NOT
+#                          include the backup API (needs your own remote
+#                          storage details) - add --installBackupAPI too
+#                          if you want it.
+#   --installModels        llama.cpp + whisper.cpp + Wyoming-whisper
+#                          bridge + wyoming-piper only.
 #   --installBackupAPI      restic backup + control API only. Needs
 #                          NANO_BACKUP_* env vars to run non-interactively -
 #                          see CoreSystemSetup/BackupAPISetup/README.md.
@@ -68,15 +70,17 @@
 #                          reasoning either way.
 #
 # Default ports (all externally-facing services):
-#   llama.cpp          8081  http://<nano-ip>:8081  (OpenAI-compatible API + web UI)
-#   whisper.cpp         8080  http://<nano-ip>:8080  (plain REST API - NOT Wyoming protocol)
-#   wyoming-piper      10200  tcp://<nano-ip>:10200  (Wyoming protocol - HA-ready)
-#   backup/control API  8843  http://<tailscale-ip>:8843  (falls back to 127.0.0.1 until Tailscale is up)
+#   llama.cpp           8081  http://<nano-ip>:8081  (OpenAI-compatible API + web UI)
+#   whisper.cpp          8080  http://<nano-ip>:8080  (plain REST API - NOT Wyoming protocol)
+#   Wyoming-whisper     10300  tcp://<nano-ip>:10300  (Wyoming protocol bridge in front of whisper.cpp)
+#   wyoming-piper       10200  tcp://<nano-ip>:10200  (Wyoming protocol - HA-ready)
+#   backup/control API   8843  http://<tailscale-ip>:8843  (falls back to 127.0.0.1 until Tailscale is up)
 #
 # Custom ports (each only takes effect for that service if it's actually
 # being installed this run):
 #   --llamaPort=9000
 #   --whisperPort=9001
+#   --wyomingWhisperPort=10301
 #   --piperPort=10201
 #   --backupApiPort=9002
 #
@@ -125,6 +129,7 @@ PURGE_GUI_PACKAGES=0
 FORCE_NEW_CONFIGS=0
 LLAMA_PORT=""
 WHISPER_PORT=""
+WYOMING_WHISPER_PORT_FLAG=""
 PIPER_PORT=""
 BACKUP_API_PORT=""
 
@@ -140,6 +145,7 @@ parse_flag_token() {
     --forceNewConfigs) FORCE_NEW_CONFIGS=1 ;;
     --llamaPort=*) LLAMA_PORT="${arg#*=}" ;;
     --whisperPort=*) WHISPER_PORT="${arg#*=}" ;;
+    --wyomingWhisperPort=*) WYOMING_WHISPER_PORT_FLAG="${arg#*=}" ;;
     --piperPort=*) PIPER_PORT="${arg#*=}" ;;
     --backupApiPort=*) BACKUP_API_PORT="${arg#*=}" ;;
     -h|--help) print_help; exit 0 ;;
@@ -174,20 +180,24 @@ declare -A CORE_PATH=(
 # hardening runs last since it changes login behavior.
 CORE_ORDER=(gui python39 gcc9 swap jtop sshharden)
 
-OPTIONAL_KEYS=(llama whisper piper backup)
+OPTIONAL_KEYS=(llama whisper wyomingwhisper piper backup)
 declare -A OPTIONAL_LABEL=(
   [llama]="Install llama.cpp (LLM inference server, port 8081 by default)"
   [whisper]="Install whisper.cpp (speech-to-text, plain REST API on port 8080 by default - NOT Wyoming protocol)"
+  [wyomingwhisper]="Install Wyoming-whisper bridge (wraps whisper.cpp for HA, Wyoming protocol, port 10300 by default - no second model)"
   [piper]="Install wyoming-piper (text-to-speech, Wyoming protocol, port 10200 by default)"
   [backup]="Install backup + control API (restic + Home Assistant endpoints, port 8843 by default)"
 )
 declare -A OPTIONAL_PATH=(
   [llama]="llama.cppSetup/install-llama-cpp-nano-service.sh"
   [whisper]="whisper.cppSetup/install-whisper-cpp.sh"
+  [wyomingwhisper]="wyoming-whisperSetup/install-wyoming-whisper.sh"
   [piper]="wyoming-piperSetup/install-wyoming-piper.sh"
   [backup]="CoreSystemSetup/BackupAPISetup/backup_api_install.sh"
 )
-OPTIONAL_ORDER=(llama whisper piper backup)
+# whisper.cpp before its Wyoming bridge - the bridge forwards to whisper.cpp's
+# own server and has nothing to transcribe with otherwise.
+OPTIONAL_ORDER=(llama whisper wyomingwhisper piper backup)
 
 SYSUPGRADE_PATH="CoreSystemSetup/SystemUpgrade/system_upgrade.sh"
 TAILSCALE_PATH="CoreSystemSetup/TaiscaleSetup/tailscale_install.sh"
@@ -298,6 +308,7 @@ export NANO_SYSUPGRADE_FORCE_NEW=$FORCE_NEW_CONFIGS
 # default (documented in its own header comment) applies otherwise.
 [[ -n "$LLAMA_PORT" ]] && export LLAMA_SERVICE_PORT="$LLAMA_PORT"
 [[ -n "$WHISPER_PORT" ]] && export WHISPER_SERVER_PORT="$WHISPER_PORT"
+[[ -n "$WYOMING_WHISPER_PORT_FLAG" ]] && export WYOMING_WHISPER_PORT="$WYOMING_WHISPER_PORT_FLAG"
 [[ -n "$PIPER_PORT" ]] && export WYOMING_PIPER_PORT="$PIPER_PORT"
 [[ -n "$BACKUP_API_PORT" ]] && export NANO_BACKUP_API_PORT="$BACKUP_API_PORT"
 
@@ -355,13 +366,13 @@ if [[ "$RUN_MODE" == "flags" ]]; then
   if [[ $INSTALL_ALL -eq 1 ]]; then
     echo "[*] --installAll: core system setup + AI models + system upgrade + Tailscale"
     for k in "${CORE_KEYS[@]}"; do SELECTED[$k]=1; done
-    SELECTED[llama]=1; SELECTED[whisper]=1; SELECTED[piper]=1
+    SELECTED[llama]=1; SELECTED[whisper]=1; SELECTED[wyomingwhisper]=1; SELECTED[piper]=1
     SELECTED[sysupgrade]=1
     SELECTED[tailscale]=1
   fi
   if [[ $INSTALL_MODELS -eq 1 ]]; then
-    echo "[*] --installModels: llama.cpp + whisper.cpp + wyoming-piper"
-    SELECTED[llama]=1; SELECTED[whisper]=1; SELECTED[piper]=1
+    echo "[*] --installModels: llama.cpp + whisper.cpp + Wyoming-whisper bridge + wyoming-piper"
+    SELECTED[llama]=1; SELECTED[whisper]=1; SELECTED[wyomingwhisper]=1; SELECTED[piper]=1
   fi
   if [[ $INSTALL_BACKUP -eq 1 ]]; then
     echo "[*] --installBackupAPI: backup + control API"
