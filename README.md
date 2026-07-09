@@ -27,13 +27,18 @@ sudo ./setup.sh --installBackupAPI                     # just the restic backup 
 sudo ./setup.sh --installAll --installBackupAPI --bypassAllChecks   # everything, no prompts
 ```
 
-`--bypassAllChecks` auto-accepts every confirmation, including the GUI-removal
-purge prompt and apt/debconf dialogs. `--bypassInstallerChecks` only
-auto-accepts installer-level confirmations, not OS-level ones (GUI removal
-still asks). Tailscale always runs last and ends by waiting on `tailscale up`'s
-login link, so with everything else on autopilot that's the one thing left on
-screen when you come back. `sudo ./setup.sh --help` lists everything, including
-the env vars the backup API installer needs for a non-interactive run.
+GUI removal defaults to a fast, non-destructive mode (just disables the
+display manager - nothing gets uninstalled); its more invasive
+`--purge-packages` mode isn't part of `--installAll` and has to be run
+standalone if you want it. `--bypassAllChecks` auto-accepts every remaining
+confirmation, including that purge mode's prompt if you do run it, plus
+apt/debconf dialogs. `--bypassInstallerChecks` only auto-accepts
+installer-level confirmations, not OS-level ones. A system package
+update/upgrade and Tailscale always run last, in that order, if selected -
+Tailscale ends by waiting on `tailscale up`'s login link, so with everything
+else on autopilot that's the one thing left on screen when you come back.
+`sudo ./setup.sh --help` lists everything, including the env vars the
+backup API installer needs for a non-interactive run.
 
 STEP 1: Install OS
 Go to this link (https://developer.nvidia.com/embedded/learn/get-started-jetson-nano-devkit#write) and follow Nvidia's instructions on how to install the OS.

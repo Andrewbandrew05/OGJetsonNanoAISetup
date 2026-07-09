@@ -8,17 +8,20 @@
 #   1. Core system setup scripts (fixed internal order, see CORE_ORDER)
 #   2. AI/service installers you selected (llama.cpp, whisper.cpp, piper,
 #      backup+API)
-#   3. Tailscale - ALWAYS last, if selected, regardless of menu order. It
+#   3. System package update/upgrade - ALWAYS right before Tailscale, if
+#      selected, regardless of menu order.
+#   4. Tailscale - ALWAYS last, if selected, regardless of menu order. It
 #      finishes by running `tailscale up`, which waits on a login URL, so
 #      it's the one thing left on screen once everything else is done.
 #
 # Package flags (combinable - selecting the same script via more than one
 # flag runs it once, not twice):
-#   --installAll          Core four + llama.cpp + whisper.cpp + wyoming-piper
-#                          + Tailscale (Tailscale always last). Does NOT
-#                          include the backup API (needs your own remote
-#                          storage details) - add --installBackupAPI too if
-#                          you want it.
+#   --installAll          Core system setup + llama.cpp + whisper.cpp +
+#                          wyoming-piper + system package upgrade +
+#                          Tailscale (upgrade then Tailscale always last,
+#                          in that order). Does NOT include the backup API
+#                          (needs your own remote storage details) - add
+#                          --installBackupAPI too if you want it.
 #   --installModels        llama.cpp + whisper.cpp + wyoming-piper only.
 #   --installBackupAPI      restic backup + control API only. Needs
 #                          NANO_BACKUP_* env vars to run non-interactively -
@@ -168,13 +171,15 @@ declare -A OPTIONAL_PATH=(
 )
 OPTIONAL_ORDER=(llama whisper piper backup)
 
+SYSUPGRADE_PATH="CoreSystemSetup/SystemUpgrade/system_upgrade.sh"
 TAILSCALE_PATH="CoreSystemSetup/TaiscaleSetup/tailscale_install.sh"
 
 # --- Build the menu (only shown if no install flag was given) ---
-ALL_KEYS=("${CORE_KEYS[@]}" "${OPTIONAL_KEYS[@]}" tailscale)
+ALL_KEYS=("${CORE_KEYS[@]}" "${OPTIONAL_KEYS[@]}" sysupgrade tailscale)
 declare -A ALL_LABEL
 for k in "${CORE_KEYS[@]}"; do ALL_LABEL[$k]="[core] ${CORE_LABEL[$k]}"; done
 for k in "${OPTIONAL_KEYS[@]}"; do ALL_LABEL[$k]="[install] ${OPTIONAL_LABEL[$k]}"; done
+ALL_LABEL[sysupgrade]="[core] System package update/upgrade (always runs right before Tailscale, if selected)"
 ALL_LABEL[tailscale]="[core] Install Tailscale (always runs last, if selected)"
 
 # --- Build the selection set. A bash associative array is a set, so
@@ -185,9 +190,10 @@ declare -A SELECTED
 if [[ $FLAG_MODE -eq 1 ]]; then
   echo "=== OG Jetson Nano AI Setup (non-interactive package mode) ==="
   if [[ $INSTALL_ALL -eq 1 ]]; then
-    echo "[*] --installAll: core system setup + AI models + Tailscale"
+    echo "[*] --installAll: core system setup + AI models + system upgrade + Tailscale"
     for k in "${CORE_KEYS[@]}"; do SELECTED[$k]=1; done
     SELECTED[llama]=1; SELECTED[whisper]=1; SELECTED[piper]=1
+    SELECTED[sysupgrade]=1
     SELECTED[tailscale]=1
   fi
   if [[ $INSTALL_MODELS -eq 1 ]]; then
@@ -233,7 +239,9 @@ if [[ ${#SELECTED[@]} -eq 0 ]]; then
   exit 0
 fi
 
-# --- Build final run order: core (fixed order) -> installs -> tailscale ---
+# --- Build final run order: core (fixed order) -> installs -> system
+# upgrade -> tailscale. System upgrade and Tailscale are always last, in
+# that order, regardless of where they appear in the menu/selection. ---
 RUN_ORDER=()
 for k in "${CORE_ORDER[@]}"; do
   [[ -n "${SELECTED[$k]:-}" ]] && RUN_ORDER+=("$k")
@@ -241,6 +249,7 @@ done
 for k in "${OPTIONAL_ORDER[@]}"; do
   [[ -n "${SELECTED[$k]:-}" ]] && RUN_ORDER+=("$k")
 done
+[[ -n "${SELECTED[sysupgrade]:-}" ]] && RUN_ORDER+=("sysupgrade")
 [[ -n "${SELECTED[tailscale]:-}" ]] && RUN_ORDER+=("tailscale")
 
 echo
@@ -249,6 +258,8 @@ n=1
 for k in "${RUN_ORDER[@]}"; do
   if [[ "$k" == "tailscale" ]]; then
     echo "  $n. Tailscale install (ends by waiting on 'tailscale up' login)"
+  elif [[ "$k" == "sysupgrade" ]]; then
+    echo "  $n. System package update/upgrade"
   elif [[ -n "${CORE_PATH[$k]:-}" ]]; then
     echo "  $n. ${CORE_LABEL[$k]}"
   else
@@ -274,6 +285,9 @@ for k in "${RUN_ORDER[@]}"; do
   if [[ "$k" == "tailscale" ]]; then
     path="$TAILSCALE_PATH"
     label="Tailscale install"
+  elif [[ "$k" == "sysupgrade" ]]; then
+    path="$SYSUPGRADE_PATH"
+    label="System package update/upgrade"
   elif [[ -n "${CORE_PATH[$k]:-}" ]]; then
     path="${CORE_PATH[$k]}"
     label="${CORE_LABEL[$k]}"

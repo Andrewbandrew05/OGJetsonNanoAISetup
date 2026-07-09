@@ -96,8 +96,15 @@ default compiler is GCC 7.5, which has none of these, and even GCC 8 is
 still missing the `_x4` variants. Symptom: `invalid initializer` /
 `incompatible types` errors deep in the quantization code.
 
-**Fix:** install `gcc-9`/`g++-9` (available directly via `apt` on Ubuntu
-18.04 — no PPA needed) and build with `CC=gcc-9 CXX=g++-9`.
+**Fix:** install `gcc-9`/`g++-9` and build with `CC=gcc-9 CXX=g++-9`.
+
+Note: Bionic's own apt repos only ever went up to gcc-8, and as of this
+writing the `ubuntu-toolchain-r/test` PPA is needed to get gcc-9 at all -
+this script's own `apt install -y gcc-9 g++-9` line assumes it's already
+available and will fail with "Unable to locate package" if the PPA hasn't
+been added first. Run `CoreSystemSetup/Gcc9Upgrade/gcc9_upgrade.sh` before
+this script (it's wired into `setup.sh`'s core order automatically) rather
+than relying on this script to fetch it itself.
 
 ### 5. Original Nano GPU is genuinely weak — set expectations accordingly
 

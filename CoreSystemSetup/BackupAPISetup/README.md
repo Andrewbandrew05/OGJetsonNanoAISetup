@@ -18,6 +18,33 @@ Installs:
 All endpoints require a bearer token (generated at install time, printed at
 the end, and saved to `/etc/nano-ai-backup/api_token`).
 
+## Non-interactive install
+
+By default this script prompts for where to store backups (remote
+SSH/Tailscale host, or S3-compatible storage) since there's no sane
+default for someone else's storage - that can't be skipped with a bypass
+flag, but it can be supplied up front via env vars:
+
+```bash
+# SSH/Tailscale target:
+NANO_BACKUP_TARGET=ssh
+NANO_BACKUP_SSH_HOST=<ip-or-tailscale-hostname>
+NANO_BACKUP_SSH_USER=<remote-ssh-user>
+NANO_BACKUP_SSH_PATH=<remote-path, e.g. /mnt/backups/jetson-nano>
+
+# or S3-compatible target:
+NANO_BACKUP_TARGET=s3
+NANO_BACKUP_S3_BUCKET=<bucket>
+NANO_BACKUP_S3_ENDPOINT=<endpoint, blank for AWS S3>
+NANO_BACKUP_S3_ACCESS_KEY=<access key id>
+NANO_BACKUP_S3_SECRET_KEY=<secret access key>
+```
+
+If `setup.sh`'s `--bypassAllChecks`/`--bypassInstallerChecks` is active and
+`NANO_BACKUP_TARGET` isn't set, the script fails fast with an error instead
+of hanging on a prompt - set the vars above, or just run this script by
+itself interactively instead.
+
 ## Important: this is not full bare-metal imaging
 
 This backs up your **configuration and data**, not a raw disk image. Cloning
