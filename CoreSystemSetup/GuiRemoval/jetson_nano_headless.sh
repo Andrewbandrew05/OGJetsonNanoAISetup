@@ -256,41 +256,62 @@ else
   echo "[*] The following packages were matched for removal:"
   printf '    %s\n' "${INSTALLED_MATCHES[@]}"
   echo
-  echo "[*] Removing one at a time via dpkg (no dependency solver - dpkg only"
-  echo "    ever touches the exact package named; if removing one would break"
-  echo "    something else currently installed, dpkg refuses rather than"
-  echo "    pulling in more removals to work around it). Packages dpkg"
-  echo "    refuses this pass are retried next pass, in case removing others"
-  echo "    first clears the way - repeated until a pass makes no progress."
 
-  REMOVE_QUEUE=("${INSTALLED_MATCHES[@]}")
   REMOVED_COUNT=0
-  pass=1
-  progress=1
-  while [[ $progress -eq 1 && ${#REMOVE_QUEUE[@]} -gt 0 ]]; do
-    echo "[*] Pass ${pass}: ${#REMOVE_QUEUE[@]} package(s) left to try..."
-    progress=0
-    NEXT_QUEUE=()
-    for pkg in "${REMOVE_QUEUE[@]}"; do
-      status=$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)
-      if [[ "$status" != "install ok installed" ]]; then
-        # Already gone (e.g. removed as a same-pass side effect isn't
-        # possible with dpkg, but this is a cheap defensive check anyway).
-        continue
-      fi
-      if dpkg_out=$(dpkg --remove "$pkg" 2>&1); then
-        echo "    Removed: $pkg"
-        REMOVED_COUNT=$((REMOVED_COUNT + 1))
-        progress=1
-      else
-        NEXT_QUEUE+=("$pkg")
-        echo "    Not yet: $pkg"
-        echo "$dpkg_out" | sed 's/^/      /'
-      fi
-    done
-    REMOVE_QUEUE=("${NEXT_QUEUE[@]}")
-    pass=$((pass + 1))
+
+  # Try removing everything matched in ONE dpkg transaction first. dpkg
+  # only ever refuses a removal because of something OUTSIDE the set
+  # named in that call - it does NOT refuse just because packages within
+  # the same call depend on each other (gdm3 needing gnome-shell, say),
+  # since after the whole transaction those needs are gone too. dpkg
+  # isn't atomic/all-or-nothing either: it removes whatever it can and
+  # reports the rest, so this is both correct and much faster than
+  # removing hundreds of packages one at a time (each dpkg invocation has
+  # its own trigger-processing overhead).
+  echo "[*] Removing all matched packages in a single dpkg transaction..."
+  dpkg --remove "${INSTALLED_MATCHES[@]}" 2>&1 | sed 's/^/    /' || true
+
+  REMOVE_QUEUE=()
+  for pkg in "${INSTALLED_MATCHES[@]}"; do
+    status=$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)
+    if [[ "$status" == "install ok installed" ]]; then
+      REMOVE_QUEUE+=("$pkg")
+    else
+      REMOVED_COUNT=$((REMOVED_COUNT + 1))
+    fi
   done
+
+  # Whatever's left goes through one at a time, in case a different
+  # removal order helps, or purely as a way to get a clear per-package
+  # reason for anything still stuck.
+  if [[ ${#REMOVE_QUEUE[@]} -gt 0 ]]; then
+    echo "[*] ${#REMOVE_QUEUE[@]} package(s) remain - retrying one at a time for a"
+    echo "    clearer picture of exactly what's blocking each one..."
+    pass=1
+    progress=1
+    while [[ $progress -eq 1 && ${#REMOVE_QUEUE[@]} -gt 0 ]]; do
+      echo "[*] Pass ${pass}: ${#REMOVE_QUEUE[@]} package(s) left to try..."
+      progress=0
+      NEXT_QUEUE=()
+      for pkg in "${REMOVE_QUEUE[@]}"; do
+        status=$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)
+        if [[ "$status" != "install ok installed" ]]; then
+          continue
+        fi
+        if dpkg_out=$(dpkg --remove "$pkg" 2>&1); then
+          echo "    Removed: $pkg"
+          REMOVED_COUNT=$((REMOVED_COUNT + 1))
+          progress=1
+        else
+          NEXT_QUEUE+=("$pkg")
+          echo "    Not yet: $pkg"
+          echo "$dpkg_out" | sed 's/^/      /'
+        fi
+      done
+      REMOVE_QUEUE=("${NEXT_QUEUE[@]}")
+      pass=$((pass + 1))
+    done
+  fi
 
   echo "[*] Removed ${REMOVED_COUNT} of ${#INSTALLED_MATCHES[@]} matched package(s)."
   if [[ ${#REMOVE_QUEUE[@]} -gt 0 ]]; then
