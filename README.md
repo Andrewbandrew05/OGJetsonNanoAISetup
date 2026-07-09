@@ -85,6 +85,12 @@ and `wyoming-piperSetup/` also works completely standalone
 through `setup.sh`. Or run `sudo ./setup.sh` with no flags at all for an
 interactive menu.
 
+`setup.sh` `chmod +x`'s each script it calls right before running it, so if
+you're doing one big run through `setup.sh` you only need to
+`chmod +x setup.sh` itself - it handles the rest. Running any of the other
+scripts standalone, though, needs it done manually first for that specific
+script: `chmod +x script.sh` before `sudo ./script.sh`.
+
 `--bypassAllChecks` auto-accepts every remaining confirmation, including
 the GUI purge mode's prompt if you use it, plus apt/debconf dialogs.
 `--bypassInstallerChecks` only auto-accepts installer-level confirmations,
