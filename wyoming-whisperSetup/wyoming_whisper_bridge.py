@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import io
 import logging
+import re
 import wave
 from functools import partial
 
@@ -25,6 +26,11 @@ from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info
 from wyoming.server import AsyncEventHandler, AsyncServer
 
 _LOGGER = logging.getLogger(__name__)
+
+# whisper.cpp emits this literal tag as "transcribed text" for silence/
+# non-speech audio instead of returning an empty string - strip it so HA
+# never sees it as if someone actually said the words "blank audio".
+_NON_SPEECH_TAG_RE = re.compile(r"\[\s*BLANK_AUDIO\s*\]", re.IGNORECASE)
 
 
 class WhisperCppBridgeHandler(AsyncEventHandler):
@@ -111,6 +117,8 @@ class WhisperCppBridgeHandler(AsyncEventHandler):
                 text = str(response.json().get("text", text)).strip()
             except ValueError:
                 pass
+        text = _NON_SPEECH_TAG_RE.sub("", text)
+        text = re.sub(r"\s{2,}", " ", text).strip()
         return text
 
 

@@ -33,6 +33,15 @@ into HA:
    (custom endpoint, function calling for HA voice assistant actions)
    than the stock integration offers.
 
+**If you enable function calling / "Control Home Assistant"** (letting
+the model actually control devices, not just chat), the client sends a
+`tools` parameter with every request. The systemd unit passes `--jinja` to
+`llama-server` specifically so it can handle that - without it,
+`llama-server` rejects any request containing `tools` outright with a 500
+error (`tools param requires --jinja flag`) before generating anything at
+all. If you ever see that specific error, or requests that seem to vanish
+without the GPU ever spiking, this flag is almost certainly why.
+
 **Security note:** `llama-server` binds `0.0.0.0` by default - every
 network interface, reachable by anyone on your LAN - with no
 authentication at all. Pass `--tailscale` (or set

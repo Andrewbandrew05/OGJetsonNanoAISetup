@@ -136,7 +136,11 @@ if [[ "$MODE" == "tailscale" ]]; then
   fi
 fi
 echo "[llama] Binding to ${BIND_HOST}:__LLAMA_PORT__"
-exec /usr/local/bin/llama-server -hf __LLAMA_MODEL_HF__ --n-gpu-layers 99 --host "$BIND_HOST" --port __LLAMA_PORT__
+# --jinja is required for any client that sends a "tools" param (e.g. Home
+# Assistant's Extended OpenAI Conversation, for function-calling/device
+# control) - without it llama-server rejects those requests outright with
+# a 500 ("tools param requires --jinja flag") before generating anything.
+exec /usr/local/bin/llama-server -hf __LLAMA_MODEL_HF__ --n-gpu-layers 99 --jinja --host "$BIND_HOST" --port __LLAMA_PORT__
 WRAPEOF
 sudo sed -i "s|__LLAMA_PORT__|${SERVICE_PORT}|g; s|__LLAMA_MODEL_HF__|${MODEL_HF}|g" "$WRAPPER"
 sudo chmod +x "$WRAPPER"
