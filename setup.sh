@@ -37,13 +37,22 @@
 #                          (e.g. backup API's "press enter to continue").
 #                          OS-level confirmations (GUI removal) still ask.
 #
+# GUI removal mode:
+#   --purgeGuiPackages      Also purge the actual GUI/desktop packages to
+#                          reclaim disk space (GUI removal's --purge-
+#                          packages mode), instead of the default
+#                          disable-only behavior. Slower, and independent
+#                          of the bypass flags above - has to be passed
+#                          explicitly either way.
+#
 # Usage (from a local clone):
 #   chmod +x setup.sh
 #   sudo ./setup.sh
 #   sudo ./setup.sh --installAll --bypassAllChecks
+#   sudo ./setup.sh --installAll --installBackupAPI --purgeGuiPackages --bypassAllChecks
 #
 # Usage (one-liner, clones the repo automatically if run standalone):
-#   curl -fsSL https://raw.githubusercontent.com/Andrewbandrew05/OGJetsonNanoAISetup/main/setup.sh | sudo bash -s -- --installAll --installBackupAPI --bypassAllChecks
+#   curl -fsSL https://raw.githubusercontent.com/Andrewbandrew05/OGJetsonNanoAISetup/main/setup.sh | sudo bash -s -- --installAll --installBackupAPI --purgeGuiPackages --bypassAllChecks
 #
 set -uo pipefail
 
@@ -73,6 +82,7 @@ INSTALL_MODELS=0
 INSTALL_BACKUP=0
 BYPASS_ALL=0
 BYPASS_INSTALLER=0
+PURGE_GUI_PACKAGES=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -81,6 +91,7 @@ for arg in "$@"; do
     --installBackupAPI) INSTALL_BACKUP=1 ;;
     --bypassAllChecks) BYPASS_ALL=1 ;;
     --bypassInstallerChecks) BYPASS_INSTALLER=1 ;;
+    --purgeGuiPackages) PURGE_GUI_PACKAGES=1 ;;
     *)
       echo "[!] Unknown flag: $arg (--help for usage)" >&2
       exit 1
@@ -89,6 +100,12 @@ for arg in "$@"; do
 done
 
 FLAG_MODE=$(( INSTALL_ALL || INSTALL_MODELS || INSTALL_BACKUP ))
+
+# NANO_GUI_PURGE_PACKAGES - tells jetson_nano_headless.sh to also purge the
+# actual GUI/desktop packages (its --purge-packages mode) instead of just
+# disabling the display manager. Independent of the bypass flags above -
+# ---purgeGuiPackages has to be passed explicitly to turn this on.
+export NANO_GUI_PURGE_PACKAGES=$PURGE_GUI_PACKAGES
 
 # NANO_SETUP_AUTO_YES     - auto-accept installer-level confirmations
 # NANO_SETUP_AUTO_YES_OS  - auto-accept OS-level (destructive/system) confirmations

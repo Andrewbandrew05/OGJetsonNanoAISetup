@@ -55,8 +55,9 @@
 #
 # Non-interactive: set NANO_SETUP_AUTO_YES_OS=1 (what setup.sh's
 # --bypassAllChecks does) to skip the confirmation the same way --yes does.
-# --purge-packages still has to be passed explicitly either way - the
-# destructive mode is never implied by a bypass flag alone.
+# Set NANO_GUI_PURGE_PACKAGES=1 (what setup.sh's --purgeGuiPackages does)
+# to turn on the destructive mode the same way --purge-packages does -
+# neither is ever implied by the other, or by a bypass flag alone.
 #
 set -euo pipefail
 
@@ -75,6 +76,9 @@ for arg in "$@"; do
 done
 if [[ "${NANO_SETUP_AUTO_YES_OS:-0}" == "1" ]]; then
   AUTO_YES=1
+fi
+if [[ "${NANO_GUI_PURGE_PACKAGES:-0}" == "1" ]]; then
+  PURGE_PACKAGES=1
 fi
 
 LOGFILE="/var/log/jetson_headless_$(date +%Y%m%d_%H%M%S).log"
