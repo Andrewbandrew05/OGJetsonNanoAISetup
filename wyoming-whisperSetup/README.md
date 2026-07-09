@@ -72,3 +72,15 @@ Most likely failure mode: whisper.cpp itself isn't running or isn't
 reachable at the URL this bridge is configured with - the bridge logs a
 clear error for that case rather than crashing, and returns an empty
 transcript to the client.
+
+## Reinstalling / uninstalling
+
+If `wyoming-whisper.service` already exists, running the install script
+again asks before overwriting it. Under `setup.sh`'s
+`--bypassAllChecks`/`--bypassInstallerChecks` it does **not** overwrite
+automatically - it skips and reports "already installed" instead, so
+re-run it directly (without those flags) to be prompted.
+
+To remove it: `sudo ./uninstall-wyoming-whisper.sh` (or via `uninstall.sh
+--uninstallWyomingWhisper`) - stops/disables the service and removes
+`/opt/wyoming-whisper`. whisper.cpp itself is untouched.

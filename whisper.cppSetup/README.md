@@ -163,8 +163,24 @@ Following the convention that services get their own folder under `/opt`:
 /opt/whisper.cpp/          # this build: source, binaries, models
 ```
 
-A companion guide for bridging this to Home Assistant via the Wyoming
-protocol (`/opt/wyoming-whisper-api-client/`) is available separately.
+For bridging this to Home Assistant via the Wyoming protocol, see
+`wyoming-whisperSetup/` in this repo - it wraps this exact server (no
+second whisper model loaded) rather than being a separate install.
+
+## Reinstalling / uninstalling
+
+If `whisper-cpp-server.service` already exists, running the install
+script again asks before overwriting it (rebuilding takes several minutes
+on Jetson Nano). Under `setup.sh`'s
+`--bypassAllChecks`/`--bypassInstallerChecks` it does **not** overwrite
+automatically - it skips and reports "already installed" instead, so
+re-run it directly (without those flags) to be prompted.
+
+To remove it: `sudo ./uninstall-whisper-cpp.sh` (or via `uninstall.sh
+--uninstallWhisper`) - stops/disables the service and removes
+`/opt/whisper.cpp` entirely (source, build, and model together). If the
+Wyoming-whisper bridge is also installed, uninstall that too since it'll
+have nothing to forward requests to afterward.
 
 ## Notes / things that surprised us along the way
 

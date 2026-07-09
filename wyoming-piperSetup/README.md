@@ -30,3 +30,15 @@ in `/opt/wyoming-piper/wyoming-piper` first).
 
 If the service fails to start for some other reason, check
 `journalctl -u wyoming-piper.service -n 50` for the actual error.
+
+## Reinstalling / uninstalling
+
+If `wyoming-piper.service` already exists, running the install script
+again asks before overwriting it. Under `setup.sh`'s
+`--bypassAllChecks`/`--bypassInstallerChecks` it does **not** overwrite
+automatically - it skips and reports "already installed" instead, so
+re-run it directly (without those flags) to be prompted.
+
+To remove it: `sudo ./uninstall-wyoming-piper.sh` (or via `uninstall.sh
+--uninstallPiper`) - stops/disables the service and removes
+`/opt/wyoming-piper` (piper binary, venv, and downloaded voice data).

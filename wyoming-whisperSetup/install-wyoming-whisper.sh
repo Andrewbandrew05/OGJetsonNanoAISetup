@@ -43,6 +43,31 @@ WYOMING_PORT="${WYOMING_WHISPER_PORT:-10300}"
 WHISPER_PORT="${WHISPER_SERVER_PORT:-8080}"
 WHISPER_URL="http://127.0.0.1:${WHISPER_PORT}/inference"
 
+# If wyoming-whisper.service already exists, ask before overwriting it.
+# Under setup.sh's --bypassAllChecks/--bypassInstallerChecks, this does
+# NOT overwrite automatically - it skips and exits 2 instead, which
+# setup.sh surfaces as a distinct "already installed" result rather than
+# retrying or silently clobbering an existing install. Rerun this script
+# directly (without those flags) to be prompted for overwrite.
+if [[ -f /etc/systemd/system/wyoming-whisper.service ]]; then
+  if [[ "${NANO_SETUP_AUTO_YES:-0}" == "1" || "${NANO_SETUP_AUTO_YES_OS:-0}" == "1" ]]; then
+    echo "[!] wyoming-whisper.service is already installed."
+    echo "[!] Auto-accept flags are active, but overwriting an existing install"
+    echo "    is too big a decision for a bypass flag to make silently -"
+    echo "    skipping instead."
+    echo "[!] Wyoming-whisper bridge install FAILED: already installed - rerun"
+    echo "    this script explicitly, without"
+    echo "    --bypassAllChecks/--bypassInstallerChecks, to be prompted for"
+    echo "    whether to overwrite it."
+    exit 2
+  fi
+  read -rp "Wyoming-whisper bridge already appears to be installed. Overwrite/reinstall? [y/N]: " OVERWRITE_CHOICE
+  case "${OVERWRITE_CHOICE,,}" in
+    y|yes) echo "[*] Proceeding with reinstall..." ;;
+    *) echo "Leaving the existing install untouched. Nothing changed."; exit 0 ;;
+  esac
+fi
+
 echo "=== Wyoming-Whisper Bridge Install ==="
 
 echo "[*] Checking whether whisper.cpp's own server is up..."

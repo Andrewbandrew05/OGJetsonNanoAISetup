@@ -471,8 +471,18 @@ for k in "${RUN_ORDER[@]}"; do
       echo "[*] Retry ${attempt}/${NANO_SETUP_SCRIPT_ATTEMPTS} for: $label (waiting ${NANO_SETUP_RETRY_DELAY}s first)"
       sleep "$NANO_SETUP_RETRY_DELAY"
     fi
-    if bash "$full_path"; then
+    bash "$full_path"
+    rc=$?
+    if [[ $rc -eq 0 ]]; then
       status="OK"
+      break
+    elif [[ $rc -eq 2 ]]; then
+      # Exit code 2 is this project's convention for "already installed,
+      # and an auto-accept flag declined to overwrite it automatically" -
+      # see the 5 service installers (llama/whisper/piper/wyoming-whisper/
+      # backup). Not a transient failure, so retrying won't change
+      # anything - stop here instead of burning through attempts.
+      status="ALREADY INSTALLED - rerun without --bypassAllChecks/--bypassInstallerChecks to be prompted for overwrite"
       break
     fi
     ((attempt++))

@@ -25,3 +25,12 @@ Env vars to change that behavior:
 - `TAILSCALE_SKIP_UP=1` - skip `tailscale up` entirely; just install and
   enable the service, and print the manual `sudo tailscale up` command to
   run later instead.
+
+## Uninstalling
+
+`sudo ./uninstall-tailscale.sh` (or via `uninstall.sh
+--uninstallTailscale`) - logs out, stops/disables `tailscaled`, purges the
+`tailscale` package, and removes its apt source/keyring. Deliberately does
+**not** run `apt-get autoremove` afterward, same reasoning as
+`CoreSystemSetup/Gcc9Upgrade`. Note the Backup API falls back to
+localhost-only once Tailscale is gone.

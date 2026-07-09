@@ -11,6 +11,14 @@
 # Default port: 8081 (http://<nano-ip>:8081, OpenAI-compatible API + web UI).
 # Override with: LLAMA_SERVICE_PORT=9000 ./install-llama-cpp-nano-service.sh
 # Via setup.sh: --llamaPort=9000
+#
+# If llama-cpp-server.service already exists, this asks before overwriting
+# it (rebuilding means redownloading the CUDA binaries and re-fetching the
+# model). Under setup.sh's --bypassAllChecks/--bypassInstallerChecks, it
+# does NOT overwrite automatically - it skips and exits 2 instead, which
+# setup.sh surfaces as a distinct "already installed" result rather than
+# retrying or silently clobbering an existing install. Rerun this script
+# directly (without those flags) to be prompted for overwrite.
 
 set -euo pipefail
 
@@ -19,6 +27,24 @@ SERVICE_USER="${SUDO_USER:-$(whoami)}"
 # server already bound to 127.0.0.1:8080. Override with LLAMA_SERVICE_PORT.
 SERVICE_PORT="${LLAMA_SERVICE_PORT:-8081}"
 MODEL_HF="ggml-org/gemma-3-1b-it-GGUF"
+
+if [[ -f /etc/systemd/system/llama-cpp-server.service ]]; then
+  if [[ "${NANO_SETUP_AUTO_YES:-0}" == "1" || "${NANO_SETUP_AUTO_YES_OS:-0}" == "1" ]]; then
+    echo "[!] llama-cpp-server.service is already installed."
+    echo "[!] Auto-accept flags are active, but overwriting an existing install"
+    echo "    (redownloading binaries, re-fetching the model) is too big a"
+    echo "    decision for a bypass flag to make silently - skipping instead."
+    echo "[!] llama.cpp install FAILED: already installed - rerun this script"
+    echo "    explicitly, without --bypassAllChecks/--bypassInstallerChecks, to"
+    echo "    be prompted for whether to overwrite it."
+    exit 2
+  fi
+  read -rp "llama.cpp already appears to be installed. Overwrite/reinstall? [y/N]: " OVERWRITE_CHOICE
+  case "${OVERWRITE_CHOICE,,}" in
+    y|yes) echo "[*] Proceeding with reinstall..." ;;
+    *) echo "Leaving the existing install untouched. Nothing changed."; exit 0 ;;
+  esac
+fi
 
 echo "=== Step 1: Ensuring curl is installed ==="
 # Not every JetPack image ships curl by default - don't assume it's there.

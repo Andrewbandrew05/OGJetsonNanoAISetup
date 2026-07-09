@@ -18,6 +18,14 @@
 # Default port: 8080 (plain HTTP REST API, NOT the Wyoming protocol - see
 # README.md). Override with WHISPER_SERVER_PORT=9000, or via setup.sh:
 # --whisperPort=9000
+#
+# If whisper-cpp-server.service already exists, this asks before
+# overwriting it (rebuilding takes several minutes on Jetson Nano). Under
+# setup.sh's --bypassAllChecks/--bypassInstallerChecks, it does NOT
+# overwrite automatically - it skips and exits 2 instead, which setup.sh
+# surfaces as a distinct "already installed" result rather than retrying
+# or silently clobbering an existing install. Rerun this script directly
+# (without those flags) to be prompted for overwrite.
 
 set -euo pipefail
 
@@ -27,6 +35,24 @@ CUDA_ARCH="sm_53"          # Jetson Nano (original). Orin Nano = sm_87, Xavier =
 MODEL="base.en"            # tiny.en / base.en / small.en / medium.en ...
 SERVICE_USER="${SUDO_USER:-$USER}"
 SERVER_PORT="${WHISPER_SERVER_PORT:-8080}"
+
+if [[ -f /etc/systemd/system/whisper-cpp-server.service ]]; then
+  if [[ "${NANO_SETUP_AUTO_YES:-0}" == "1" || "${NANO_SETUP_AUTO_YES_OS:-0}" == "1" ]]; then
+    echo "[!] whisper-cpp-server.service is already installed."
+    echo "[!] Auto-accept flags are active, but overwriting an existing install"
+    echo "    (a several-minute rebuild) is too big a decision for a bypass flag"
+    echo "    to make silently - skipping instead."
+    echo "[!] whisper.cpp install FAILED: already installed - rerun this script"
+    echo "    explicitly, without --bypassAllChecks/--bypassInstallerChecks, to"
+    echo "    be prompted for whether to overwrite it."
+    exit 2
+  fi
+  read -rp "whisper.cpp already appears to be installed. Overwrite/reinstall? [y/N]: " OVERWRITE_CHOICE
+  case "${OVERWRITE_CHOICE,,}" in
+    y|yes) echo "[*] Proceeding with reinstall..." ;;
+    *) echo "Leaving the existing install untouched. Nothing changed."; exit 0 ;;
+  esac
+fi
 
 echo "==> [1/7] Installing build dependencies"
 sudo apt update

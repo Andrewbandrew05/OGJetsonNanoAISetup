@@ -11,3 +11,12 @@ Idempotent - skips the install entirely if gcc-9 and g++-9 are already
 present. Safe to run standalone (`sudo ./gcc9_upgrade.sh`) or as part of
 `setup.sh`, where it runs right after the Python 3.9 build so both are
 ready before `whisper.cppSetup/install-whisper-cpp.sh` needs them.
+
+## Uninstalling
+
+`sudo ./uninstall-gcc9.sh` (or via `uninstall.sh --uninstallGcc9`) -
+removes the `gcc-9`/`g++-9` packages and the `ubuntu-toolchain-r/test` PPA.
+Deliberately does **not** run `apt-get autoremove` afterward - see
+`CoreSystemSetup/GuiRemoval/README.md` for why blind autoremove is unsafe
+on this hardware; if gcc-9 pulled in shared dependencies nothing else uses,
+they're just left in place rather than risking a solver-driven cascade.

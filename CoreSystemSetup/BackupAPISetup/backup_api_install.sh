@@ -59,6 +59,33 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# If nano-ai-api.service already exists, ask before overwriting it (this
+# would regenerate the API token, invalidating anything already using the
+# old one, and re-run the restic repository setup dance). Under
+# --bypassAllChecks/--bypassInstallerChecks this does NOT overwrite
+# automatically - it skips and exits 2 instead, which setup.sh surfaces as
+# a distinct "already installed" result rather than retrying or silently
+# clobbering an existing install. Rerun this script directly (without
+# those flags) to be prompted for overwrite.
+if [[ -f /etc/systemd/system/nano-ai-api.service ]]; then
+  if [[ $AUTO_YES -eq 1 ]]; then
+    echo "[!] nano-ai-api.service is already installed."
+    echo "[!] Auto-accept flags are active, but overwriting an existing install"
+    echo "    (new API token, redoing the backup target setup) is too big a"
+    echo "    decision for a bypass flag to make silently - skipping instead."
+    echo "[!] Backup + control API install FAILED: already installed - rerun"
+    echo "    this script explicitly, without"
+    echo "    --bypassAllChecks/--bypassInstallerChecks, to be prompted for"
+    echo "    whether to overwrite it."
+    exit 2
+  fi
+  read -rp "Backup + control API already appears to be installed. Overwrite/reinstall? [y/N]: " OVERWRITE_CHOICE
+  case "${OVERWRITE_CHOICE,,}" in
+    y|yes) echo "[*] Proceeding with reinstall..." ;;
+    *) echo "Leaving the existing install untouched. Nothing changed."; exit 0 ;;
+  esac
+fi
+
 INSTALL_DIR="/opt/nano-ai-backup"
 CONF_DIR="/etc/nano-ai-backup"
 RESTIC_ENV="${CONF_DIR}/restic.env"

@@ -8,3 +8,13 @@ your key first (`ssh-copy-id user@nano-ip`), then run this. It also backs
 up the original `sshd_config` (timestamped, in `/etc/ssh/`) and validates
 the new config with `sshd -t` before restarting the service, restoring the
 backup automatically if validation fails.
+
+## Uninstalling
+
+`sudo ./uninstall-ssh-harden.sh` (or via `uninstall.sh
+--uninstallSshHarden`) - restores the **oldest** `sshd_config.bak.*` found
+(the true pre-hardening baseline, not just the most recent run), validates
+it with `sshd -t` before restarting `ssh`, and reverts automatically if
+validation fails. Backs up the current (hardened) config first, so nothing
+is lost either way. Turning password auth back on can't lock you out - only
+removing an auth method can do that, and this only ever adds one back.

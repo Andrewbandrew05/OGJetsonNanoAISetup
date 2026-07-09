@@ -39,3 +39,18 @@ backup API (binds the Tailscale interface only), `llama-server` binds
 reachable from anywhere on your LAN by default, not just over Tailscale.
 That may be intentional for easy direct access, but it's worth being
 aware of before exposing this to a network you don't fully trust.
+
+## Reinstalling / uninstalling
+
+If `llama-cpp-server.service` already exists, running the install script
+again asks before overwriting it (rebuilding means redownloading the CUDA
+binaries and re-fetching the model). Under `setup.sh`'s
+`--bypassAllChecks`/`--bypassInstallerChecks` it does **not** overwrite
+automatically - it skips and reports "already installed" instead, so
+re-run it directly (without those flags) to be prompted.
+
+To remove it: `sudo ./uninstall-llama-cpp-nano-service.sh` (or via
+`uninstall.sh --uninstallLlama`) - stops/disables the service and removes
+the installed binaries/libraries; separately asks about the downloaded
+model cache (`~/.cache/llama.cpp`, several GB) since that's a bigger,
+more clearly-irreversible deletion.

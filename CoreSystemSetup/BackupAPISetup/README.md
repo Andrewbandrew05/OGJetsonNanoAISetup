@@ -120,6 +120,24 @@ restic snapshots                  # see what's available
 restic restore latest --target /  # restore the most recent snapshot
 ```
 
+## Reinstalling / uninstalling
+
+If `nano-ai-api.service` already exists, running the install script again
+asks before overwriting it (this would regenerate the API token and redo
+the backup target setup). Under `setup.sh`'s
+`--bypassAllChecks`/`--bypassInstallerChecks` it does **not** overwrite
+automatically - it skips and reports "already installed" instead, so
+re-run it directly (without those flags) to be prompted.
+
+To remove it: `sudo ./uninstall-backup-api.sh` (or via `uninstall.sh
+--uninstallBackupAPI`) - stops/disables all three systemd units and
+removes `/opt/nano-ai-backup`/`/etc/nano-ai-backup`. **Does not touch your
+remote backup target** - your actual backups stay exactly where they are;
+this only removes the local API/service/config on this Nano. Warns before
+deleting the restic password (needed to ever decrypt those remote
+backups) and separately asks about the dedicated SSH key, since removing
+it locally doesn't revoke it on the remote side.
+
 ## Home Assistant example (`configuration.yaml`)
 
 ```yaml

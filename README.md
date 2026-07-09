@@ -132,3 +132,51 @@ one, this flag takes the package maintainer's version instead; see
 `CoreSystemSetup/SystemUpgrade/README.md` for the reasoning either way.
 `sudo ./setup.sh --help` lists everything, including the env vars the
 backup API installer needs for a non-interactive run.
+
+## Reinstalling something already installed
+
+The 5 externally-facing service installers (llama.cpp, whisper.cpp, the
+Wyoming-whisper bridge, wyoming-piper, and the Backup + control API) detect
+an existing install and ask before overwriting it. Under
+`--bypassAllChecks`/`--bypassInstallerChecks` they deliberately **don't**
+overwrite automatically - re-downloading binaries or a model, or
+regenerating an API token, is too big a decision for a bypass flag to make
+silently. Instead they skip and report "already installed" in the final
+summary; re-run that specific script directly (without those flags) to be
+prompted. The core/system scripts (Python 3.9, gcc-9, swap, jtop, SSH
+hardening, GUI removal) are idempotent instead - safe to overwrite/re-run
+without asking, since there's nothing user-specific to lose.
+
+## Uninstalling
+
+```bash
+sudo ./uninstall.sh --uninstallAll
+```
+
+Undoes everything `setup.sh` can do, script by script - each
+`uninstall-*.sh` stops/disables its systemd service(s) and removes what it
+installed. A few are worth knowing about specifically:
+
+- **GUI removal** is reversed properly, not just "turned back on": it
+  restores the boot target and display manager, and if you used
+  `--purgeGuiPackages`, it diffs the oldest pre-removal package snapshot
+  against what's currently installed and offers to reinstall exactly what's
+  missing - not a guessed list, the actual packages that specific run
+  removed. See `CoreSystemSetup/GuiRemoval/README.md`.
+- **SSH hardening** restores the oldest backed-up `sshd_config` (the true
+  pre-hardening baseline), validating it with `sshd -t` before restarting
+  `ssh` so a bad restore can't lock you out.
+- **The Backup API** uninstaller does **not** touch your remote backups -
+  only the local API/service/config on the Nano. It warns before letting
+  you delete the restic password and asks separately about the dedicated
+  SSH key, since removing it locally doesn't revoke it remotely.
+
+Like `setup.sh`, running `sudo ./uninstall.sh` with no arguments gives you
+an interactive menu (numbers or a flag string), and every `uninstall-*.sh`
+also works standalone. Individual flags: `--uninstallLlama`,
+`--uninstallWhisper`, `--uninstallWyomingWhisper`, `--uninstallPiper`,
+`--uninstallBackupAPI`, `--uninstallTailscale`, `--uninstallSshHarden`,
+`--uninstallJtop`, `--uninstallSwap`, `--uninstallGcc9`,
+`--uninstallPython39`, `--uninstallGui`. `--bypassAllChecks` skips the
+"are you sure?" confirmations. `sudo ./uninstall.sh --help` lists
+everything.

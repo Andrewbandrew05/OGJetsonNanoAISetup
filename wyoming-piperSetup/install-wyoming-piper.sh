@@ -30,6 +30,13 @@
 # Default port: 10200 (real Wyoming protocol - this one IS ready for HA's
 # Wyoming integration). Override with WYOMING_PIPER_PORT=10201, or via
 # setup.sh: --piperPort=10201
+#
+# If wyoming-piper.service already exists, this asks before overwriting
+# it. Under setup.sh's --bypassAllChecks/--bypassInstallerChecks, it does
+# NOT overwrite automatically - it skips and exits 2 instead, which
+# setup.sh surfaces as a distinct "already installed" result rather than
+# retrying or silently clobbering an existing install. Rerun this script
+# directly (without those flags) to be prompted for overwrite.
 
 set -euo pipefail
 
@@ -37,6 +44,25 @@ PIPER_DIR="/opt/wyoming-piper"
 VOICE="en_US-lessac-medium"      # https://rhasspy.github.io/piper-samples/ for other voices
 WYOMING_PORT="${WYOMING_PIPER_PORT:-10200}"
 SERVICE_USER="${SUDO_USER:-$USER}"
+
+if [[ -f /etc/systemd/system/wyoming-piper.service ]]; then
+  if [[ "${NANO_SETUP_AUTO_YES:-0}" == "1" || "${NANO_SETUP_AUTO_YES_OS:-0}" == "1" ]]; then
+    echo "[!] wyoming-piper.service is already installed."
+    echo "[!] Auto-accept flags are active, but overwriting an existing install"
+    echo "    is too big a decision for a bypass flag to make silently -"
+    echo "    skipping instead."
+    echo "[!] wyoming-piper install FAILED: already installed - rerun this"
+    echo "    script explicitly, without"
+    echo "    --bypassAllChecks/--bypassInstallerChecks, to be prompted for"
+    echo "    whether to overwrite it."
+    exit 2
+  fi
+  read -rp "wyoming-piper already appears to be installed. Overwrite/reinstall? [y/N]: " OVERWRITE_CHOICE
+  case "${OVERWRITE_CHOICE,,}" in
+    y|yes) echo "[*] Proceeding with reinstall..." ;;
+    *) echo "Leaving the existing install untouched. Nothing changed."; exit 0 ;;
+  esac
+fi
 
 echo "==> [1/6] Installing Python 3.9 (required by wyoming-piper; Jetson ships 3.6/3.8 only)"
 if ! command -v python3.9 >/dev/null 2>&1; then

@@ -21,3 +21,15 @@ catches everything on every image variant (package names/versions can
 differ across JetPack releases), but it is guaranteed not to remove
 anything that would stop the board from booting - worst case is less disk
 space reclaimed than ideal, never a broken system.
+
+## Uninstalling
+
+`sudo ./uninstall-gui-removal.sh` (or via `uninstall.sh --uninstallGui`) -
+always switches the boot target back to `graphical.target` and re-enables
+known display managers (`gdm3`, `gdm`, `lightdm`, `sddm`, `xdm`, `slim`,
+`lxdm`) for next boot; it doesn't force-start the GUI in your current
+session. If you used `--purge-packages`, it also finds the **oldest**
+`/root/pkg_list_before_headless_*.txt` snapshot (the true pre-removal
+baseline), diffs it against the packages currently installed, and offers
+to reinstall exactly what's missing - not a fixed guess list, the actual
+packages this specific run removed.
