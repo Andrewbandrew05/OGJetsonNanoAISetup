@@ -31,6 +31,17 @@ in `/opt/wyoming-piper/wyoming-piper` first).
 If the service fails to start for some other reason, check
 `journalctl -u wyoming-piper.service -n 50` for the actual error.
 
+## Binding
+
+Defaults to `0.0.0.0` (reachable by anyone on your LAN). Pass
+`--tailscale` (or set `WYOMING_PIPER_BIND_TAILSCALE=1`) to restrict it to
+the Tailscale interface instead; falls back to `127.0.0.1` if `tailscale0`
+never comes up, never silently to LAN-wide. Already installed and just
+want to flip that setting without a full reinstall?
+`sudo ./install-wyoming-piper.sh --rebind [--tailscale]`, or
+`sudo ./setup.sh --rebindTailscale` / `--rebindLan` to flip every
+already-installed bind-aware service at once.
+
 ## Reinstalling / uninstalling
 
 If `wyoming-piper.service` already exists, running the install script

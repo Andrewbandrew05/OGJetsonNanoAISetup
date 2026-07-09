@@ -7,8 +7,16 @@
 # Home Assistant (or anything else) can trigger backups/restarts without a
 # custom HA integration - just HA's built-in rest_command / rest sensor.
 #
-# The API only binds to the Tailscale interface once it exists; until then
-# it falls back to 127.0.0.1 so it's never accidentally exposed on the LAN.
+# Binding: defaults to 0.0.0.0 (reachable by anyone on your LAN), same as
+# the other externally-facing services in this project. SECURITY NOTE:
+# unlike those, this API can trigger a REBOOT and a BACKUP RUN, guarded
+# only by a bearer token in a plaintext file on this box - consider passing
+# --tailscale (or setting NANO_BACKUP_BIND_TAILSCALE=1) to bind only the
+# Tailscale interface instead (falls back to 127.0.0.1 if tailscale0 never
+# comes up, never silently to LAN-wide). Already installed and just want to
+# flip modes without a full reinstall (which would regenerate the API
+# token)? Pass --rebind (with/without --tailscale), or use setup.sh
+# --rebindTailscale/--rebindLan.
 #
 # NOTE ON SCOPE: this backs up configs/homes/service state via restic to a
 # remote target (NAS over Tailscale, or S3-compatible storage), NOT a full
@@ -57,6 +65,36 @@ fi
 if [[ $EUID -ne 0 ]]; then
   echo "This script must be run as root (use sudo)." >&2
   exit 1
+fi
+
+BIND_TAILSCALE=0
+REBIND_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --tailscale) BIND_TAILSCALE=1 ;;
+    --rebind) REBIND_ONLY=1 ;;
+  esac
+done
+[[ "${NANO_BACKUP_BIND_TAILSCALE:-0}" == "1" ]] && BIND_TAILSCALE=1
+[[ "${NANO_REBIND_ONLY:-0}" == "1" ]] && REBIND_ONLY=1
+
+BIND_DIR="/etc/nano-ai-bind"
+MODE_FILE="${BIND_DIR}/backup.mode"
+WRAPPER="${BIND_DIR}/backup-start.sh"
+NEW_MODE="lan"
+[[ $BIND_TAILSCALE -eq 1 ]] && NEW_MODE="tailscale"
+
+if [[ $REBIND_ONLY -eq 1 ]]; then
+  if [[ ! -f /etc/systemd/system/nano-ai-api.service ]]; then
+    echo "[!] nano-ai-api.service isn't installed - nothing to rebind." >&2
+    exit 1
+  fi
+  mkdir -p "$BIND_DIR"
+  echo "$NEW_MODE" > "$MODE_FILE"
+  echo "[*] Set backup API bind mode to: $NEW_MODE"
+  systemctl restart nano-ai-api.service
+  echo "[*] Restarted nano-ai-api.service."
+  exit 0
 fi
 
 # If nano-ai-api.service already exists, ask before overwriting it (this
@@ -357,24 +395,38 @@ def trigger_reboot(authorization: Optional[str] = Header(default=None)):
     return {"status": "rebooting in 3 seconds"}
 PYEOF
 
-# --- Startup wrapper: bind to Tailscale IP once available, else localhost ---
+# --- Startup wrapper: LAN-wide by default, or Tailscale-only (falling back
+# to localhost, never silently to LAN-wide) if the bind mode file says so.
 # API_PORT is read from the process environment at runtime (set via the
 # systemd unit's Environment= line below), not substituted here - this
-# heredoc is intentionally quoted so $BIND_HOST/$TS_IP are also left for
-# this script to evaluate itself when it actually runs, not at generation
-# time.
+# heredoc is intentionally quoted so $BIND_HOST/$TS_IP/$MODE are also left
+# for this script to evaluate itself when it actually runs, not at
+# generation time.
+mkdir -p "$BIND_DIR"
+echo "$NEW_MODE" > "$MODE_FILE"
+
 cat > "${INSTALL_DIR}/start-api.sh" <<'EOF'
 #!/bin/bash
 set -e
-BIND_HOST="127.0.0.1"
-for i in $(seq 1 30); do
-  TS_IP=$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 || true)
-  if [[ -n "$TS_IP" ]]; then
-    BIND_HOST="$TS_IP"
-    break
+MODE_FILE="/etc/nano-ai-bind/backup.mode"
+MODE=$(cat "$MODE_FILE" 2>/dev/null || echo "lan")
+BIND_HOST="0.0.0.0"
+if [[ "$MODE" == "tailscale" ]]; then
+  BIND_HOST=""
+  for i in $(seq 1 30); do
+    TS_IP=$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 || true)
+    if [[ -n "$TS_IP" ]]; then
+      BIND_HOST="$TS_IP"
+      break
+    fi
+    sleep 2
+  done
+  if [[ -z "$BIND_HOST" ]]; then
+    echo "[backup-api] tailscale-only bind mode set, but tailscale0 never came up -"
+    echo "[backup-api] falling back to 127.0.0.1 (never silently to LAN-wide)."
+    BIND_HOST="127.0.0.1"
   fi
-  sleep 2
-done
+fi
 API_PORT="${API_PORT:-8843}"
 echo "[start-api] Binding to ${BIND_HOST}:${API_PORT}"
 exec /opt/nano-ai-backup/venv/bin/uvicorn app:app --app-dir /opt/nano-ai-backup --host "$BIND_HOST" --port "$API_PORT"
@@ -408,9 +460,16 @@ echo "API token (give this to Home Assistant as a Bearer token):"
 echo "    ${API_TOKEN}"
 echo "Also stored at: $API_TOKEN_FILE"
 echo
-echo "IMPORTANT: the API only binds once the tailscale0 interface exists"
-echo "(falls back to 127.0.0.1 until then). If Tailscale isn't set up yet,"
-echo "run its installer, then: sudo systemctl restart nano-ai-api"
+if [[ "$NEW_MODE" == "tailscale" ]]; then
+  echo "Bind mode: Tailscale-only (falls back to 127.0.0.1 if tailscale0 isn't up)"
+else
+  echo "Bind mode: LAN-wide (0.0.0.0:${API_PORT} - reachable by anyone on your LAN)"
+  echo "SECURITY NOTE: this API can trigger a reboot and a backup run, guarded only"
+  echo "by the bearer token above. Consider restricting it to Tailscale-only:"
+  echo "  sudo ./backup_api_install.sh --rebind --tailscale"
+fi
+echo "Flip it later without a full reinstall: sudo ./backup_api_install.sh --rebind [--tailscale]"
+echo "or: sudo ./setup.sh --rebindTailscale / --rebindLan"
 echo
 echo "Example calls (replace <tailscale-ip> and <token>):"
 echo "  curl -H \"Authorization: Bearer <token>\" http://<tailscale-ip>:${API_PORT}/status"

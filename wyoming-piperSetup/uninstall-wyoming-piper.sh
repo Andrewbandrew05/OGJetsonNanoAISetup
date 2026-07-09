@@ -59,6 +59,10 @@ systemctl disable wyoming-piper.service 2>/dev/null || true
 rm -f /etc/systemd/system/wyoming-piper.service
 systemctl daemon-reload
 
+echo "[*] Removing bind-mode files..."
+rm -f /etc/nano-ai-bind/piper.mode /etc/nano-ai-bind/piper-start.sh
+rmdir --ignore-fail-on-non-empty /etc/nano-ai-bind 2>/dev/null || true
+
 echo "[*] Removing ${PIPER_DIR}..."
 rm -rf "$PIPER_DIR"
 

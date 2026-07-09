@@ -19,14 +19,55 @@
 # setup.sh surfaces as a distinct "already installed" result rather than
 # retrying or silently clobbering an existing install. Rerun this script
 # directly (without those flags) to be prompted for overwrite.
+#
+# Binding: defaults to 0.0.0.0 (reachable by anyone on your LAN). Pass
+# --tailscale (or set LLAMA_BIND_TAILSCALE=1) to bind only the Tailscale
+# interface instead - falls back to 127.0.0.1 if tailscale0 never comes up,
+# never silently to LAN-wide. Already installed and just want to flip
+# between the two without a full reinstall (which redownloads the model)?
+# Pass --rebind alongside --tailscale or on its own - see
+# --rebind's own comment below, or use setup.sh --rebindTailscale/--rebindLan.
 
 set -euo pipefail
+
+BIND_TAILSCALE=0
+REBIND_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --tailscale) BIND_TAILSCALE=1 ;;
+    --rebind) REBIND_ONLY=1 ;;
+  esac
+done
+[[ "${LLAMA_BIND_TAILSCALE:-0}" == "1" ]] && BIND_TAILSCALE=1
+[[ "${NANO_REBIND_ONLY:-0}" == "1" ]] && REBIND_ONLY=1
 
 SERVICE_USER="${SUDO_USER:-$(whoami)}"
 # Deliberately NOT 8080 by default, to avoid clashing with the whisper.cpp
 # server already bound to 127.0.0.1:8080. Override with LLAMA_SERVICE_PORT.
 SERVICE_PORT="${LLAMA_SERVICE_PORT:-8081}"
 MODEL_HF="ggml-org/gemma-3-1b-it-GGUF"
+
+BIND_DIR="/etc/nano-ai-bind"
+MODE_FILE="${BIND_DIR}/llama.mode"
+WRAPPER="${BIND_DIR}/llama-start.sh"
+NEW_MODE="lan"
+[[ $BIND_TAILSCALE -eq 1 ]] && NEW_MODE="tailscale"
+
+# --rebind: already installed and just want to flip LAN-wide <-> Tailscale-
+# only? Skip the entire reinstall/overwrite-prompt flow below - just rewrite
+# the mode file the wrapper script reads and restart the service.
+if [[ $REBIND_ONLY -eq 1 ]]; then
+  if [[ ! -f /etc/systemd/system/llama-cpp-server.service ]]; then
+    echo "[!] llama-cpp-server.service isn't installed - nothing to rebind." >&2
+    exit 1
+  fi
+  sudo mkdir -p "$BIND_DIR"
+  echo "$NEW_MODE" | sudo tee "$MODE_FILE" > /dev/null
+  echo "[*] Set llama.cpp bind mode to: $NEW_MODE"
+  sudo systemctl restart llama-cpp-server.service
+  echo "[*] Restarted llama-cpp-server.service."
+  exit 0
+fi
 
 if [[ -f /etc/systemd/system/llama-cpp-server.service ]]; then
   if [[ "${NANO_SETUP_AUTO_YES:-0}" == "1" || "${NANO_SETUP_AUTO_YES_OS:-0}" == "1" ]]; then
@@ -68,7 +109,38 @@ if ! command -v llama-server >/dev/null 2>&1; then
 fi
 llama-server --version || true
 
-echo "=== Step 4: Creating systemd service ==="
+echo "=== Step 4: Creating bind-mode wrapper + systemd service ==="
+sudo mkdir -p "$BIND_DIR"
+echo "$NEW_MODE" | sudo tee "$MODE_FILE" > /dev/null
+
+sudo tee "$WRAPPER" > /dev/null << 'WRAPEOF'
+#!/bin/bash
+set -e
+MODE_FILE="/etc/nano-ai-bind/llama.mode"
+MODE=$(cat "$MODE_FILE" 2>/dev/null || echo "lan")
+BIND_HOST="0.0.0.0"
+if [[ "$MODE" == "tailscale" ]]; then
+  BIND_HOST=""
+  for i in $(seq 1 30); do
+    TS_IP=$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 || true)
+    if [[ -n "$TS_IP" ]]; then
+      BIND_HOST="$TS_IP"
+      break
+    fi
+    sleep 2
+  done
+  if [[ -z "$BIND_HOST" ]]; then
+    echo "[llama] tailscale-only bind mode set, but tailscale0 never came up -"
+    echo "[llama] falling back to 127.0.0.1 (never silently to LAN-wide)."
+    BIND_HOST="127.0.0.1"
+  fi
+fi
+echo "[llama] Binding to ${BIND_HOST}:__LLAMA_PORT__"
+exec /usr/local/bin/llama-server -hf __LLAMA_MODEL_HF__ --n-gpu-layers 99 --host "$BIND_HOST" --port __LLAMA_PORT__
+WRAPEOF
+sudo sed -i "s|__LLAMA_PORT__|${SERVICE_PORT}|g; s|__LLAMA_MODEL_HF__|${MODEL_HF}|g" "$WRAPPER"
+sudo chmod +x "$WRAPPER"
+
 sudo tee /etc/systemd/system/llama-cpp-server.service > /dev/null << EOF
 [Unit]
 Description=llama.cpp CUDA server (Jetson Nano, gcc8.5 build)
@@ -78,7 +150,7 @@ After=network.target
 Type=simple
 User=${SERVICE_USER}
 Environment="LD_LIBRARY_PATH=/usr/local/lib"
-ExecStart=/usr/local/bin/llama-server -hf ${MODEL_HF} --n-gpu-layers 99 --host 0.0.0.0 --port ${SERVICE_PORT}
+ExecStart=${WRAPPER}
 Restart=on-failure
 RestartSec=5
 # The very first run downloads + converts the model (can take several
@@ -98,7 +170,13 @@ sudo systemctl start llama-cpp-server.service
 echo ""
 echo "=== Done ==="
 echo "Service installed as: llama-cpp-server.service"
-echo "Listening on: http://0.0.0.0:${SERVICE_PORT}"
+if [[ "$NEW_MODE" == "tailscale" ]]; then
+  echo "Bind mode: Tailscale-only (falls back to 127.0.0.1 if tailscale0 isn't up)"
+else
+  echo "Bind mode: LAN-wide (http://0.0.0.0:${SERVICE_PORT} - reachable by anyone on your LAN)"
+fi
+echo "Flip it later without a full reinstall: sudo ./install-llama-cpp-nano-service.sh --rebind [--tailscale]"
+echo "or: sudo ./setup.sh --rebindTailscale / --rebindLan"
 echo ""
 echo "NOTE: first startup will take several minutes while the model downloads"
 echo "and converts. Watch progress with:"

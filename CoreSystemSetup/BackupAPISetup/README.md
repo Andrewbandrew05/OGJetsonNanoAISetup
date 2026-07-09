@@ -68,9 +68,18 @@ baseline.
 
 ## Security notes
 
-- The API only binds to the Tailscale interface (`tailscale0`). Until
-  Tailscale is up, it falls back to `127.0.0.1` only - it will never be
-  exposed on your LAN or the internet by default.
+- **Binding defaults to `0.0.0.0`** (reachable by anyone on your LAN),
+  same as the other externally-facing services in this project. **Unlike
+  those, this API can trigger a reboot and a backup run**, guarded only by
+  a bearer token in a plaintext file on this box - strongly consider
+  restricting it to Tailscale-only: pass `--tailscale` (or set
+  `NANO_BACKUP_BIND_TAILSCALE=1`) at install time, which falls back to
+  `127.0.0.1` if `tailscale0` never comes up, never silently to LAN-wide.
+  Already installed and just want to flip that setting without a full
+  reinstall (which regenerates the API token)?
+  `sudo ./backup_api_install.sh --rebind --tailscale`, or
+  `sudo ./setup.sh --rebindTailscale` / `--rebindLan` to flip every
+  already-installed bind-aware service at once.
 - The restic encryption password is generated for you and stored in
   `/etc/nano-ai-backup/restic.env` (mode 600). **Copy it somewhere else too**
   - if that file is lost alongside the Nano, your backups can't be decrypted.

@@ -33,12 +33,17 @@ into HA:
    (custom endpoint, function calling for HA voice assistant actions)
    than the stock integration offers.
 
-**Security note:** unlike whisper.cpp (binds `127.0.0.1` only) and the
-backup API (binds the Tailscale interface only), `llama-server` binds
-`0.0.0.0` - every network interface - with no authentication at all. It's
-reachable from anywhere on your LAN by default, not just over Tailscale.
-That may be intentional for easy direct access, but it's worth being
-aware of before exposing this to a network you don't fully trust.
+**Security note:** `llama-server` binds `0.0.0.0` by default - every
+network interface, reachable by anyone on your LAN - with no
+authentication at all. Pass `--tailscale` (or set
+`LLAMA_BIND_TAILSCALE=1`) to restrict it to the Tailscale interface
+instead; falls back to `127.0.0.1` if `tailscale0` never comes up, never
+silently to LAN-wide. Already installed and just want to flip that setting
+without a full reinstall (which redownloads the model)?
+`sudo ./install-llama-cpp-nano-service.sh --rebind [--tailscale]`, or
+`sudo ./setup.sh --rebindTailscale` / `--rebindLan` to flip every
+already-installed bind-aware service (llama.cpp, wyoming-piper, the
+Wyoming-whisper bridge, backup API) at once.
 
 ## Reinstalling / uninstalling
 

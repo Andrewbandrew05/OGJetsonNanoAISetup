@@ -91,6 +91,10 @@ systemctl daemon-reload
 echo "[*] Removing ${INSTALL_DIR} and ${CONF_DIR}..."
 rm -rf "$INSTALL_DIR" "$CONF_DIR"
 
+echo "[*] Removing bind-mode files..."
+rm -f /etc/nano-ai-bind/backup.mode
+rmdir --ignore-fail-on-non-empty /etc/nano-ai-bind 2>/dev/null || true
+
 echo
 if [[ -f "$KEYFILE" ]]; then
   echo "Dedicated backup SSH key found at ${KEYFILE}."

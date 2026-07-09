@@ -75,6 +75,10 @@ systemctl disable llama-cpp-server.service 2>/dev/null || true
 rm -f /etc/systemd/system/llama-cpp-server.service
 systemctl daemon-reload
 
+echo "[*] Removing bind-mode files..."
+rm -f /etc/nano-ai-bind/llama.mode /etc/nano-ai-bind/llama-start.sh
+rmdir --ignore-fail-on-non-empty /etc/nano-ai-bind 2>/dev/null || true
+
 echo "[*] Removing binaries and libraries..."
 for b in "${BINARIES[@]}"; do
   if [[ -f "/usr/local/bin/$b" ]]; then

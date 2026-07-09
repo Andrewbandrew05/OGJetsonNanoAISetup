@@ -62,6 +62,10 @@ systemctl disable wyoming-whisper.service 2>/dev/null || true
 rm -f /etc/systemd/system/wyoming-whisper.service
 systemctl daemon-reload
 
+echo "[*] Removing bind-mode files..."
+rm -f /etc/nano-ai-bind/wyomingwhisper.mode /etc/nano-ai-bind/wyomingwhisper-start.sh
+rmdir --ignore-fail-on-non-empty /etc/nano-ai-bind 2>/dev/null || true
+
 echo "[*] Removing ${BRIDGE_DIR}..."
 rm -rf "$BRIDGE_DIR"
 

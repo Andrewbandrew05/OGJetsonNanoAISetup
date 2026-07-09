@@ -27,6 +27,13 @@
 # so if you customized whisper.cpp's port, this picks it up automatically
 # without needing to be told twice.
 #
+# Binding: defaults to 0.0.0.0 (reachable by anyone on your LAN). Pass
+# --tailscale (or set WYOMING_WHISPER_BIND_TAILSCALE=1) to bind only the
+# Tailscale interface instead - falls back to 127.0.0.1 if tailscale0 never
+# comes up, never silently to LAN-wide. Already installed and just want to
+# flip modes without a full reinstall? Pass --rebind (with/without
+# --tailscale), or use setup.sh --rebindTailscale/--rebindLan.
+#
 # Usage:
 #   sudo ./install-wyoming-whisper.sh
 #
@@ -37,11 +44,41 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+BIND_TAILSCALE=0
+REBIND_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --tailscale) BIND_TAILSCALE=1 ;;
+    --rebind) REBIND_ONLY=1 ;;
+  esac
+done
+[[ "${WYOMING_WHISPER_BIND_TAILSCALE:-0}" == "1" ]] && BIND_TAILSCALE=1
+[[ "${NANO_REBIND_ONLY:-0}" == "1" ]] && REBIND_ONLY=1
+
 BRIDGE_DIR="/opt/wyoming-whisper"
 SERVICE_USER="${SUDO_USER:-$USER}"
 WYOMING_PORT="${WYOMING_WHISPER_PORT:-10300}"
 WHISPER_PORT="${WHISPER_SERVER_PORT:-8080}"
 WHISPER_URL="http://127.0.0.1:${WHISPER_PORT}/inference"
+
+BIND_DIR="/etc/nano-ai-bind"
+MODE_FILE="${BIND_DIR}/wyomingwhisper.mode"
+WRAPPER="${BIND_DIR}/wyomingwhisper-start.sh"
+NEW_MODE="lan"
+[[ $BIND_TAILSCALE -eq 1 ]] && NEW_MODE="tailscale"
+
+if [[ $REBIND_ONLY -eq 1 ]]; then
+  if [[ ! -f /etc/systemd/system/wyoming-whisper.service ]]; then
+    echo "[!] wyoming-whisper.service isn't installed - nothing to rebind." >&2
+    exit 1
+  fi
+  mkdir -p "$BIND_DIR"
+  echo "$NEW_MODE" > "$MODE_FILE"
+  echo "[*] Set wyoming-whisper bind mode to: $NEW_MODE"
+  systemctl restart wyoming-whisper.service
+  echo "[*] Restarted wyoming-whisper.service."
+  exit 0
+fi
 
 # If wyoming-whisper.service already exists, ask before overwriting it.
 # Under setup.sh's --bypassAllChecks/--bypassInstallerChecks, this does
@@ -100,7 +137,37 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cp "${SCRIPT_DIR}/wyoming_whisper_bridge.py" "${BRIDGE_DIR}/wyoming_whisper_bridge.py"
 chown "$SERVICE_USER":"$SERVICE_USER" "${BRIDGE_DIR}/wyoming_whisper_bridge.py"
 
-echo "[*] Installing systemd service..."
+echo "[*] Installing bind-mode wrapper + systemd service..."
+mkdir -p "$BIND_DIR"
+echo "$NEW_MODE" > "$MODE_FILE"
+
+cat > "$WRAPPER" <<WRAPEOF
+#!/bin/bash
+set -e
+MODE_FILE="/etc/nano-ai-bind/wyomingwhisper.mode"
+MODE=\$(cat "\$MODE_FILE" 2>/dev/null || echo "lan")
+BIND_HOST="0.0.0.0"
+if [[ "\$MODE" == "tailscale" ]]; then
+  BIND_HOST=""
+  for i in \$(seq 1 30); do
+    TS_IP=\$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print \$4}' | cut -d/ -f1 || true)
+    if [[ -n "\$TS_IP" ]]; then
+      BIND_HOST="\$TS_IP"
+      break
+    fi
+    sleep 2
+  done
+  if [[ -z "\$BIND_HOST" ]]; then
+    echo "[wyoming-whisper] tailscale-only bind mode set, but tailscale0 never came up -"
+    echo "[wyoming-whisper] falling back to 127.0.0.1 (never silently to LAN-wide)."
+    BIND_HOST="127.0.0.1"
+  fi
+fi
+echo "[wyoming-whisper] Binding to \${BIND_HOST}:${WYOMING_PORT}"
+exec ${BRIDGE_DIR}/.venv/bin/python3 ${BRIDGE_DIR}/wyoming_whisper_bridge.py --uri "tcp://\${BIND_HOST}:${WYOMING_PORT}" --whisper-url ${WHISPER_URL}
+WRAPEOF
+chmod +x "$WRAPPER"
+
 cat > /etc/systemd/system/wyoming-whisper.service <<EOF
 [Unit]
 Description=Wyoming protocol bridge for whisper.cpp
@@ -111,7 +178,7 @@ Wants=whisper-cpp-server.service
 Type=simple
 User=${SERVICE_USER}
 WorkingDirectory=${BRIDGE_DIR}
-ExecStart=${BRIDGE_DIR}/.venv/bin/python3 ${BRIDGE_DIR}/wyoming_whisper_bridge.py --uri tcp://0.0.0.0:${WYOMING_PORT} --whisper-url ${WHISPER_URL}
+ExecStart=${WRAPPER}
 Restart=on-failure
 RestartSec=5
 
@@ -129,7 +196,13 @@ systemctl status wyoming-whisper.service --no-pager || true
 
 echo
 echo "=== Done ==="
-echo "Wyoming STT bridge listening on tcp://0.0.0.0:${WYOMING_PORT}"
+if [[ "$NEW_MODE" == "tailscale" ]]; then
+  echo "Bind mode: Tailscale-only (falls back to 127.0.0.1 if tailscale0 isn't up)"
+else
+  echo "Bind mode: LAN-wide (tcp://0.0.0.0:${WYOMING_PORT} - reachable by anyone on your LAN)"
+fi
+echo "Flip it later without a full reinstall: sudo ./install-wyoming-whisper.sh --rebind [--tailscale]"
+echo "or: sudo ./setup.sh --rebindTailscale / --rebindLan"
 echo "Forwarding transcription requests to: ${WHISPER_URL}"
 echo
 echo "Add it in Home Assistant: Settings > Devices & Services > Add"

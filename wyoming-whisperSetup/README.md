@@ -73,6 +73,20 @@ reachable at the URL this bridge is configured with - the bridge logs a
 clear error for that case rather than crashing, and returns an empty
 transcript to the client.
 
+## Binding
+
+The bridge (this service, port 10300) defaults to `0.0.0.0` (reachable by
+anyone on your LAN). Pass `--tailscale` (or set
+`WYOMING_WHISPER_BIND_TAILSCALE=1`) to restrict it to the Tailscale
+interface instead; falls back to `127.0.0.1` if `tailscale0` never comes
+up, never silently to LAN-wide. Already installed and just want to flip
+that setting without a full reinstall?
+`sudo ./install-wyoming-whisper.sh --rebind [--tailscale]`, or
+`sudo ./setup.sh --rebindTailscale` / `--rebindLan` to flip every
+already-installed bind-aware service at once. whisper.cpp's own REST
+server underneath stays `127.0.0.1`-only regardless - nothing outside this
+box needs to reach it directly, only this bridge does.
+
 ## Reinstalling / uninstalling
 
 If `wyoming-whisper.service` already exists, running the install script

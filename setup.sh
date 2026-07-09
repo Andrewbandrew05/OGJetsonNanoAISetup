@@ -59,6 +59,26 @@
 #                          of the bypass flags above - has to be passed
 #                          explicitly either way.
 #
+# Binding (llama.cpp, wyoming-piper, the Wyoming-whisper bridge, and the
+# backup+control API - the 4 services with a network-reachable port):
+#   Default is LAN-wide (0.0.0.0) - reachable by anyone on your local
+#   network. --tailscaleAll restricts all 4 to the Tailscale interface only
+#   for THIS run's fresh installs (falls back to 127.0.0.1 if tailscale0
+#   never comes up, never silently to LAN-wide). SECURITY NOTE: the backup
+#   API can trigger a reboot and a backup run, guarded only by a bearer
+#   token in a plaintext file - consider restricting at least that one to
+#   Tailscale even if you leave the AI services LAN-wide.
+#   --tailscaleAll          Fresh installs this run bind Tailscale-only
+#                          instead of LAN-wide, for all 4 services above.
+#   --rebindTailscale        Standalone mode (ignores install/package flags):
+#   --rebindLan              flips the bind mode of every ALREADY-INSTALLED
+#                          one of the 4 services above, without a full
+#                          reinstall (no redownloading models/binaries, no
+#                          new API token). Mutually exclusive with each
+#                          other; skips any of the 4 that aren't installed.
+#                          Same effect per-service: sudo ./<script>.sh
+#                          --rebind [--tailscale]
+#
 # System upgrade config-file policy:
 #   --forceNewConfigs       When the system package upgrade hits a config
 #                          file that was locally modified (e.g. a Jetson-
@@ -127,6 +147,8 @@ BYPASS_ALL=0
 BYPASS_INSTALLER=0
 PURGE_GUI_PACKAGES=0
 FORCE_NEW_CONFIGS=0
+TAILSCALE_ALL=0
+REBIND_MODE=""
 LLAMA_PORT=""
 WHISPER_PORT=""
 WYOMING_WHISPER_PORT_FLAG=""
@@ -143,6 +165,21 @@ parse_flag_token() {
     --bypassInstallerChecks) BYPASS_INSTALLER=1 ;;
     --purgeGuiPackages) PURGE_GUI_PACKAGES=1 ;;
     --forceNewConfigs) FORCE_NEW_CONFIGS=1 ;;
+    --tailscaleAll) TAILSCALE_ALL=1 ;;
+    --rebindTailscale)
+      if [[ -n "$REBIND_MODE" && "$REBIND_MODE" != "tailscale" ]]; then
+        echo "[!] --rebindTailscale and --rebindLan are mutually exclusive." >&2
+        exit 1
+      fi
+      REBIND_MODE="tailscale"
+      ;;
+    --rebindLan)
+      if [[ -n "$REBIND_MODE" && "$REBIND_MODE" != "lan" ]]; then
+        echo "[!] --rebindTailscale and --rebindLan are mutually exclusive." >&2
+        exit 1
+      fi
+      REBIND_MODE="lan"
+      ;;
     --llamaPort=*) LLAMA_PORT="${arg#*=}" ;;
     --whisperPort=*) WHISPER_PORT="${arg#*=}" ;;
     --wyomingWhisperPort=*) WYOMING_WHISPER_PORT_FLAG="${arg#*=}" ;;
@@ -304,6 +341,16 @@ export NANO_GUI_PURGE_PACKAGES=$PURGE_GUI_PACKAGES
 # (keep the current one).
 export NANO_SYSUPGRADE_FORCE_NEW=$FORCE_NEW_CONFIGS
 
+# --tailscaleAll - fresh installs this run bind Tailscale-only instead of
+# LAN-wide, for the 4 services that support it. Has no effect on services
+# already installed - see --rebindTailscale/--rebindLan for that.
+if [[ $TAILSCALE_ALL -eq 1 ]]; then
+  export LLAMA_BIND_TAILSCALE=1
+  export WYOMING_PIPER_BIND_TAILSCALE=1
+  export WYOMING_WHISPER_BIND_TAILSCALE=1
+  export NANO_BACKUP_BIND_TAILSCALE=1
+fi
+
 # Custom ports - only exported if actually given, so each script's own
 # default (documented in its own header comment) applies otherwise.
 [[ -n "$LLAMA_PORT" ]] && export LLAMA_SERVICE_PORT="$LLAMA_PORT"
@@ -358,6 +405,42 @@ fi
 cd "$REPO_ROOT"
 echo "[*] Using repo at: $REPO_ROOT"
 echo
+
+# --- Standalone rebind mode: flip the bind mode (LAN-wide <-> Tailscale-
+# only) of every already-installed service that supports it, without a
+# full reinstall. Ignores install/package flags entirely - exits before
+# reaching the normal SELECTED/RUN_ORDER logic below. ---
+if [[ -n "$REBIND_MODE" ]]; then
+  declare -A REBIND_UNIT=(
+    [llama]="llama-cpp-server.service"
+    [piper]="wyoming-piper.service"
+    [wyomingwhisper]="wyoming-whisper.service"
+    [backup]="nano-ai-api.service"
+  )
+  echo "[*] Rebind mode: setting every already-installed supported service to '${REBIND_MODE}'."
+  echo
+  REBIND_ARGS=(--rebind)
+  [[ "$REBIND_MODE" == "tailscale" ]] && REBIND_ARGS+=(--tailscale)
+  for k in llama piper wyomingwhisper backup; do
+    unit="${REBIND_UNIT[$k]}"
+    path="${OPTIONAL_PATH[$k]}"
+    full_path="${REPO_ROOT}/${path}"
+    if [[ ! -f "/etc/systemd/system/${unit}" ]]; then
+      echo "  [skip] ${k}: not installed (${unit} not found)"
+      continue
+    fi
+    echo "  [*] ${k}: rebinding..."
+    chmod +x "$full_path" 2>/dev/null || true
+    if bash "$full_path" "${REBIND_ARGS[@]}"; then
+      echo "  [ok] ${k}: rebound to ${REBIND_MODE}"
+    else
+      echo "  [!] ${k}: rebind failed - see output above" >&2
+    fi
+    echo
+  done
+  echo "Done."
+  exit 0
+fi
 
 # --- Build the selection set from flags, if that's the mode we're in. (A
 # bash associative array is a set, so selecting the same script via more

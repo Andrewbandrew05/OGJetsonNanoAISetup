@@ -59,16 +59,46 @@ waits for you: Tailscale runs last and ends by blocking on
 
 | Service | Port | Notes |
 |---|---|---|
-| llama.cpp | 8081 | `http://<nano-ip>:8081` - OpenAI-compatible API + web UI. Binds all interfaces, no auth - see `llama.cppSetup/README.md`. |
-| whisper.cpp | 8080 | `http://127.0.0.1:8080` - plain REST API, localhost-only, **not** the Wyoming protocol. |
-| Wyoming-whisper bridge | 10300 | `tcp://<nano-ip>:10300` - Wyoming protocol wrapper in front of whisper.cpp, for HA's Wyoming integration. See `wyoming-whisperSetup/README.md`. |
-| wyoming-piper | 10200 | `tcp://<nano-ip>:10200` - Wyoming protocol, HA-ready directly. |
-| Backup + control API | 8843 | `http://<tailscale-ip>:8843` - Tailscale-only until Tailscale is up, then falls back to `127.0.0.1`. |
+| llama.cpp | 8081 | `http://<nano-ip>:8081` - OpenAI-compatible API + web UI. LAN-wide by default, no auth - see `llama.cppSetup/README.md`. |
+| whisper.cpp | 8080 | `http://127.0.0.1:8080` - plain REST API, always localhost-only, **not** the Wyoming protocol. |
+| Wyoming-whisper bridge | 10300 | `tcp://<nano-ip>:10300` - Wyoming protocol wrapper in front of whisper.cpp, for HA's Wyoming integration. LAN-wide by default. See `wyoming-whisperSetup/README.md`. |
+| wyoming-piper | 10200 | `tcp://<nano-ip>:10200` - Wyoming protocol, HA-ready directly. LAN-wide by default. |
+| Backup + control API | 8843 | `http://<nano-ip>:8843` - LAN-wide by default; can trigger a reboot/backup, see the Binding section below. |
 
 Every port above is overridable - `--llamaPort=`, `--whisperPort=`,
 `--wyomingWhisperPort=`, `--piperPort=`, `--backupApiPort=` (each only
 applies if that service is actually being installed in the same run). See
 `sudo ./setup.sh --help` for the full reference.
+
+### Binding: LAN-wide vs Tailscale-only
+
+llama.cpp, wyoming-piper, the Wyoming-whisper bridge, and the backup +
+control API all default to `0.0.0.0` - reachable by anyone on your LAN.
+`--tailscaleAll` restricts all 4 to the Tailscale interface only, for that
+run's fresh installs (falls back to `127.0.0.1` if `tailscale0` never
+comes up, never silently to LAN-wide):
+
+```bash
+sudo ./setup.sh --installAll --tailscaleAll --bypassAllChecks
+```
+
+Each installer also takes its own `--tailscale` flag if you only want to
+restrict one service (e.g. `sudo ./backup_api_install.sh --tailscale`).
+**The backup API is worth restricting even if you leave the AI services
+LAN-wide** - it can trigger a reboot and a backup run, guarded only by a
+bearer token in a plaintext file.
+
+Already installed and just want to flip the setting without a full
+reinstall (redownloading models/binaries, a new API token)?
+
+```bash
+sudo ./setup.sh --rebindTailscale   # or --rebindLan
+```
+
+This flips every already-installed one of the 4 services above in place
+(skipping any that aren't installed) - no reinstall, just a config change
+and a restart. Per-service equivalent: `sudo ./<script>.sh --rebind
+[--tailscale]`.
 
 This intentionally leaves out two things that need information only you
 have:

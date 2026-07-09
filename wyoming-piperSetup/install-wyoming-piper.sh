@@ -37,13 +37,50 @@
 # setup.sh surfaces as a distinct "already installed" result rather than
 # retrying or silently clobbering an existing install. Rerun this script
 # directly (without those flags) to be prompted for overwrite.
+#
+# Binding: defaults to 0.0.0.0 (reachable by anyone on your LAN). Pass
+# --tailscale (or set WYOMING_PIPER_BIND_TAILSCALE=1) to bind only the
+# Tailscale interface instead - falls back to 127.0.0.1 if tailscale0 never
+# comes up, never silently to LAN-wide. Already installed and just want to
+# flip modes without a full reinstall? Pass --rebind (with/without
+# --tailscale), or use setup.sh --rebindTailscale/--rebindLan.
 
 set -euo pipefail
+
+BIND_TAILSCALE=0
+REBIND_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --tailscale) BIND_TAILSCALE=1 ;;
+    --rebind) REBIND_ONLY=1 ;;
+  esac
+done
+[[ "${WYOMING_PIPER_BIND_TAILSCALE:-0}" == "1" ]] && BIND_TAILSCALE=1
+[[ "${NANO_REBIND_ONLY:-0}" == "1" ]] && REBIND_ONLY=1
 
 PIPER_DIR="/opt/wyoming-piper"
 VOICE="en_US-lessac-medium"      # https://rhasspy.github.io/piper-samples/ for other voices
 WYOMING_PORT="${WYOMING_PIPER_PORT:-10200}"
 SERVICE_USER="${SUDO_USER:-$USER}"
+
+BIND_DIR="/etc/nano-ai-bind"
+MODE_FILE="${BIND_DIR}/piper.mode"
+WRAPPER="${BIND_DIR}/piper-start.sh"
+NEW_MODE="lan"
+[[ $BIND_TAILSCALE -eq 1 ]] && NEW_MODE="tailscale"
+
+if [[ $REBIND_ONLY -eq 1 ]]; then
+  if [[ ! -f /etc/systemd/system/wyoming-piper.service ]]; then
+    echo "[!] wyoming-piper.service isn't installed - nothing to rebind." >&2
+    exit 1
+  fi
+  sudo mkdir -p "$BIND_DIR"
+  echo "$NEW_MODE" | sudo tee "$MODE_FILE" > /dev/null
+  echo "[*] Set wyoming-piper bind mode to: $NEW_MODE"
+  sudo systemctl restart wyoming-piper.service
+  echo "[*] Restarted wyoming-piper.service."
+  exit 0
+fi
 
 if [[ -f /etc/systemd/system/wyoming-piper.service ]]; then
   if [[ "${NANO_SETUP_AUTO_YES:-0}" == "1" || "${NANO_SETUP_AUTO_YES_OS:-0}" == "1" ]]; then
@@ -118,7 +155,38 @@ mkdir -p "$PIPER_DIR/data"
 # start. Re-chown everything now to match who actually needs to write here.
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$PIPER_DIR"
 
-echo "==> [6/6] Installing systemd service"
+echo "==> [6/6] Installing bind-mode wrapper + systemd service"
+sudo mkdir -p "$BIND_DIR"
+echo "$NEW_MODE" | sudo tee "$MODE_FILE" > /dev/null
+
+sudo tee "$WRAPPER" > /dev/null << 'WRAPEOF'
+#!/bin/bash
+set -e
+MODE_FILE="/etc/nano-ai-bind/piper.mode"
+MODE=$(cat "$MODE_FILE" 2>/dev/null || echo "lan")
+BIND_HOST="0.0.0.0"
+if [[ "$MODE" == "tailscale" ]]; then
+  BIND_HOST=""
+  for i in $(seq 1 30); do
+    TS_IP=$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 || true)
+    if [[ -n "$TS_IP" ]]; then
+      BIND_HOST="$TS_IP"
+      break
+    fi
+    sleep 2
+  done
+  if [[ -z "$BIND_HOST" ]]; then
+    echo "[piper] tailscale-only bind mode set, but tailscale0 never came up -"
+    echo "[piper] falling back to 127.0.0.1 (never silently to LAN-wide)."
+    BIND_HOST="127.0.0.1"
+  fi
+fi
+echo "[piper] Binding to ${BIND_HOST}:__PIPER_PORT__"
+exec __PIPER_DIR__/wyoming-piper/.venv/bin/python3 -m wyoming_piper --piper __PIPER_DIR__/piper/piper --voice __PIPER_VOICE__ --uri "tcp://${BIND_HOST}:__PIPER_PORT__" --data-dir __PIPER_DIR__/data --download-dir __PIPER_DIR__/data
+WRAPEOF
+sudo sed -i "s|__PIPER_PORT__|${WYOMING_PORT}|g; s|__PIPER_DIR__|${PIPER_DIR}|g; s|__PIPER_VOICE__|${VOICE}|g" "$WRAPPER"
+sudo chmod +x "$WRAPPER"
+
 sudo tee /etc/systemd/system/wyoming-piper.service > /dev/null << EOF
 [Unit]
 Description=Wyoming protocol Piper TTS server (CPU)
@@ -128,7 +196,7 @@ After=network.target
 Type=simple
 User=${SERVICE_USER}
 WorkingDirectory=${PIPER_DIR}/wyoming-piper
-ExecStart=${PIPER_DIR}/wyoming-piper/.venv/bin/python3 -m wyoming_piper --piper ${PIPER_DIR}/piper/piper --voice ${VOICE} --uri tcp://0.0.0.0:${WYOMING_PORT} --data-dir ${PIPER_DIR}/data --download-dir ${PIPER_DIR}/data
+ExecStart=${WRAPPER}
 Restart=on-failure
 RestartSec=5
 
@@ -144,9 +212,17 @@ echo ""
 echo "==> Service status:"
 sudo systemctl status wyoming-piper.service --no-pager || true
 
+if [[ "$NEW_MODE" == "tailscale" ]]; then
+  echo "Bind mode: Tailscale-only (falls back to 127.0.0.1 if tailscale0 isn't up)"
+else
+  echo "Bind mode: LAN-wide (tcp://0.0.0.0:${WYOMING_PORT} - reachable by anyone on your LAN)"
+fi
+echo "Flip it later without a full reinstall: sudo ./install-wyoming-piper.sh --rebind [--tailscale]"
+echo "or: sudo ./setup.sh --rebindTailscale / --rebindLan"
+
 echo ""
 echo "If the service failed to start, check 'journalctl -u wyoming-piper.service -n 50'"
 echo "-- the most likely cause is the --piper/--voice flag names differing from what"
 echo "the --help output above showed. Adjust the ExecStart line in"
-echo "/etc/systemd/system/wyoming-piper.service to match, then:"
-echo "  sudo systemctl daemon-reload && sudo systemctl restart wyoming-piper.service"
+echo "${WRAPPER} to match, then:"
+echo "  sudo systemctl restart wyoming-piper.service"
