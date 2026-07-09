@@ -25,6 +25,14 @@ Credit Claude for majority of install scripts and documentation (I've verified t
    sudo apt-get install -y tmux
    tmux new -s setup
    ```
+   If your SSH session drops (or you close your laptop and reconnect
+   later), the install keeps running inside `tmux` regardless - just SSH
+   back in and reattach to see it:
+   ```bash
+   tmux attach -t setup
+   ```
+   If you're not sure whether a session is still running, `tmux ls` lists
+   all of them by name.
 4. Clone this repo:
    ```bash
    git clone https://github.com/Andrewbandrew05/OGJetsonNanoAISetup.git
