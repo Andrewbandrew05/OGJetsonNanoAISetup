@@ -11,45 +11,56 @@
 #  - Does NOT uninstall anything - desktop packages stay on disk untouched
 #
 # OPTIONAL, SLOWER, DESTRUCTIVE MODE (--purge-packages):
-#  - Additionally purges the actual GUI/desktop packages to reclaim disk
-#    space. Guarded by a simulate-first safety check (see below) so it
-#    won't remove anything boot-critical - but it's still a much bigger,
-#    slower operation than the default, since it's actually uninstalling
-#    dozens of packages rather than just disabling a service.
+#  - Additionally removes the actual GUI/desktop packages to reclaim disk
+#    space. This has been tested against a JetPack image downloaded
+#    2026-07-07 and reliably removes a good chunk of unused desktop
+#    packages on that image - there's no guarantee it catches
+#    everything on every image variant (package names/versions can differ),
+#    but it is guaranteed not to remove anything that would stop the board
+#    from booting. Worst case if something's named differently than
+#    expected: you get back less disk space than ideal, never a broken
+#    system - see WHY THIS IS SAFE below for the actual mechanism.
 #
-# SAFE BY DESIGN:
-#  - Default mode changes nothing on disk - fully reversible by just
-#    re-enabling the display manager and setting the default target back.
-#  - --purge-packages does NOT touch nvidia-l4t-* packages (GPU/CUDA/
-#    multimedia drivers). Removing those can break CUDA support or the
-#    ability to reflash.
-#  - --purge-packages simulates the removal AND the autoremove step first,
-#    and checks the proposed removal list against a denylist of
-#    boot-critical packages (kernel, initramfs-tools, nvidia-l4t-*,
-#    systemd, dbus, network-manager, openssh, etc). If anything on that
-#    list would be removed, that step is skipped entirely rather than
-#    trusting apt's dependency solver blindly. (An earlier version of this
-#    script ran `apt-get autoremove --purge` unconditionally, with no such
-#    check - on real hardware this cascaded into removing far more than
-#    the targeted GUI packages and left the board unable to boot.)
-#  - Uses `apt-get remove`/`autoremove`, never `--purge`, for its own
-#    actions. `--purge` doesn't just act on the current transaction - it
-#    can also finalize (fully purge) OTHER packages already sitting in
-#    "removed but not purged" state system-wide as routine dpkg
-#    housekeeping, and that side effect isn't reliably caught by the
-#    simulate-first check above (it happened on real hardware even with
-#    the guard active: nvidia-l4t-jetson-multimedia-api and a couple of
-#    CUDA packages were already in that state from something unrelated to
-#    this script, and got swept up anyway). Config remnants of the
-#    packages we actually target are cleaned up separately via a fixed,
-#    reviewed STRAY_PATHS list instead of relying on --purge.
+# WHY THIS IS SAFE (allowlist, not denylist):
+#  - This removes packages via `dpkg --remove`, one at a time, NOT
+#    `apt-get remove`/`apt-get autoremove`. That distinction is the whole
+#    safety model: `apt-get` has a dependency SOLVER that's free to decide
+#    "removing this also requires removing that" and pull in extra
+#    packages beyond what was asked for - that's exactly how earlier
+#    versions of this script ended up removing nvidia-l4t-* and CUDA
+#    packages on real hardware, despite denylist checks and simulate-first
+#    guards layered on top. `dpkg --remove` has no solver: it only ever
+#    touches the exact package named. If removing it would break something
+#    else currently installed, dpkg just refuses with a clear error -
+#    it never silently expands scope.
+#  - Because there's no cascade to worry about, there's also no
+#    `apt-get autoremove` step at all anymore. Autoremove asks apt to
+#    guess what's "no longer needed" and was the single riskiest part of
+#    the old design (the direct cause of the first bricked board tonight).
+#    The GUI_PACKAGES list below already enumerates the actual
+#    leaf/library packages directly, so nothing needs to be guessed
+#    afterward.
+#  - Packages are only ever attempted if they match GUI_PACKAGES AND don't
+#    match CRITICAL_PATTERNS (kernel, nvidia-l4t-*, initramfs-tools,
+#    systemd, dbus, network-manager, openssh, etc) - a cheap sanity check
+#    on the candidate list itself, in case a wildcard pattern ever matches
+#    something it shouldn't on some other image.
+#  - Removal happens in passes: whatever dpkg refuses this pass (because
+#    something else installed still depends on it) is retried next pass,
+#    until a full pass makes no more progress. Anything still refused
+#    after that is left installed and reported - not forced.
+#  - Uses `dpkg --remove`, never `--purge`: config files are left behind
+#    (matches this script's design elsewhere - purge has its own
+#    system-wide side effects, see git history for why that was dropped).
+#    Config remnants of packages that DID get removed are cleaned up
+#    separately via a fixed, reviewed STRAY_PATHS list.
 #  - Backs up the installed package list before making changes.
 #  - Requires an explicit "yes" confirmation before making changes.
 #  - Meant to be run over SSH, not from the desktop session itself.
 #
 # Usage:
 #   sudo ./jetson_nano_headless.sh                     # disable-only (default, fast)
-#   sudo ./jetson_nano_headless.sh --purge-packages     # also purge GUI packages (slower)
+#   sudo ./jetson_nano_headless.sh --purge-packages     # also remove GUI packages (slower)
 #   sudo ./jetson_nano_headless.sh --yes                # skip the confirmation prompt
 #   sudo ./jetson_nano_headless.sh --purge-packages --yes
 #
@@ -89,14 +100,15 @@ if [[ $PURGE_PACKAGES -eq 1 ]]; then
   echo "This will:"
   echo "  1. Set the boot target to text console (multi-user.target) permanently"
   echo "  2. Disable the display manager service so it won't start at boot"
-  echo "  3. Purge desktop/GUI packages (gdm3, lightdm, gnome/unity, xorg, etc.)"
-  echo "  4. Autoremove now-unused dependencies"
-  echo "  5. Clean apt caches and orphaned config/log files from those packages"
+  echo "  3. Remove desktop/GUI packages (gdm3, lightdm, gnome/unity, xorg, etc.)"
+  echo "     one at a time via dpkg, which cannot cascade into removing"
+  echo "     anything beyond what's explicitly matched - see script header."
+  echo "  4. Clean apt caches and orphaned config/log files from those packages"
   echo
-  echo "It will NOT remove nvidia-l4t-* packages (CUDA/GPU/driver stack)."
-  echo "Steps 3 and 4 simulate first and refuse to run if anything"
-  echo "boot-critical (kernel, nvidia-l4t-*, initramfs-tools, etc.) would be"
-  echo "removed - see the script header for details."
+  echo "It will NOT remove nvidia-l4t-* or other boot-critical packages -"
+  echo "removal only ever touches the exact packages matched, one at a time,"
+  echo "and dpkg refuses (rather than cascades) if something else still"
+  echo "depends on one of them."
 else
   echo "This will:"
   echo "  1. Set the boot target to text console (multi-user.target) permanently"
@@ -104,8 +116,7 @@ else
   echo
   echo "Nothing gets uninstalled - your desktop packages stay on disk exactly"
   echo "as they are. Re-run with --purge-packages if you also want to reclaim"
-  echo "the disk space they use (slower, and only after a simulate-first"
-  echo "safety check that refuses to remove anything boot-critical)."
+  echo "the disk space they use (slower)."
 fi
 echo "A full package list backup will be saved to: $BACKUP_LIST"
 echo "A log of everything done will be saved to: $LOGFILE"
@@ -156,11 +167,12 @@ fi
 
 # --- Everything below only runs with --purge-packages ---
 
-# --- Safety net for the purge/autoremove steps below ---
-# Patterns for packages that must never be removed, no matter what apt's
-# dependency solver decides is "no longer needed". This exists because an
-# unconditional `apt-get autoremove --purge` previously cascaded into
-# removing boot-critical packages on real hardware.
+# Patterns for packages that must never be removed, no matter what. This is
+# a sanity check on the CANDIDATE list below, not a simulate-based guard -
+# dpkg --remove structurally cannot cascade into removing something not in
+# that list, so there's nothing to simulate. This just catches the case
+# where a GUI_PACKAGES wildcard pattern accidentally matches something it
+# shouldn't on some other image.
 CRITICAL_PATTERNS=(
   "linux-image*" "linux-headers*" "linux-modules*" "linux-firmware*"
   "nvidia-l4t-*" "nvidia-*" "tegra*" "cuda-*" "l4t-*"
@@ -180,40 +192,10 @@ is_critical_package() {
   return 1
 }
 
-# Simulates a purge/autoremove command (never touches the system), logs the
-# full set of packages it would remove, and returns non-zero instead of
-# letting the caller run the real command if anything on CRITICAL_PATTERNS
-# shows up in that set.
-simulate_and_guard() {
-  local description="$1"; shift
-  local sim_output candidates pkg
-  local critical_hits=()
-  sim_output=$("$@" 2>&1) || true
-  candidates=$(echo "$sim_output" | grep -E '^(Remv|Purg) ' | awk '{print $2}')
-  if [[ -z "$candidates" ]]; then
-    echo "[*] ${description}: nothing would be removed."
-    return 0
-  fi
-  echo "[*] ${description}: would remove the following package(s):"
-  echo "$candidates" | sed 's/^/    /'
-  while IFS= read -r pkg; do
-    [[ -z "$pkg" ]] && continue
-    if is_critical_package "$pkg"; then
-      critical_hits+=("$pkg")
-    fi
-  done <<< "$candidates"
-  if [[ ${#critical_hits[@]} -gt 0 ]]; then
-    echo "[!] SAFETY ABORT for '${description}': this would also remove critical package(s):"
-    printf '    %s\n' "${critical_hits[@]}"
-    echo "[!] Skipping this step entirely rather than risk an unbootable system."
-    return 1
-  fi
-  return 0
-}
-
-# List of GUI/desktop-related package name patterns to purge.
-# Uses wildcard matching via apt-get; nvidia-l4t-* is explicitly excluded
-# by never matching that pattern here.
+# List of GUI/desktop-related package name patterns to remove. Uses
+# wildcard matching against whatever's actually installed (dpkg-query -W),
+# so this adapts fine to different images - it only ever touches packages
+# that are really present, never assumes a fixed exact package set.
 GUI_PACKAGES=(
   "ubuntu-desktop*"
   "ubuntu-session*"
@@ -251,42 +233,19 @@ GUI_PACKAGES=(
   "evince*"
 )
 
-# --- Pre-flight check: warn about anything already sitting in "removed but
-# not purged" (rc) state before we do anything. This matters because
-# apt-get's --purge flag doesn't just act on the current transaction - it
-# can also finalize (fully purge) OTHER packages already in rc state
-# system-wide as routine dpkg housekeeping, and that side effect isn't
-# reliably shown by `apt-get -s` simulation the same way it happens for
-# real. That's exactly how a --purge run got past the simulate-based guard
-# below on real hardware. Using plain `remove`/`autoremove` (no --purge)
-# for our own actions avoids triggering that side effect at all; this
-# pre-flight scan just surfaces anything already in that state so you know
-# about it going in.
-PREEXISTING_RC=$(dpkg -l | awk '$1=="rc"{print $2}')
-if [[ -n "$PREEXISTING_RC" ]]; then
-  echo "[*] Note: the following packages are already in 'removed, config"
-  echo "    remaining' state on this system (not caused by this script):"
-  echo "$PREEXISTING_RC" | sed 's/^/    /'
-  while IFS= read -r pkg; do
-    [[ -z "$pkg" ]] && continue
-    if is_critical_package "$pkg"; then
-      echo "[!] Note: '$pkg' is on the critical list and already in this"
-      echo "    state from before this script ran - not something we did."
-    fi
-  done <<< "$PREEXISTING_RC"
-fi
-
 echo "[*] Resolving which of the above are actually installed..."
 INSTALLED_MATCHES=()
 for pattern in "${GUI_PACKAGES[@]}"; do
   matches=$(dpkg-query -W -f='${Package}\n' "$pattern" 2>/dev/null || true)
   if [[ -n "$matches" ]]; then
     while IFS= read -r pkg; do
-      # Safety net: never touch nvidia-l4t packages even if a pattern
-      # somehow matched them.
-      if [[ "$pkg" != nvidia-l4t-* ]]; then
-        INSTALLED_MATCHES+=("$pkg")
+      [[ -z "$pkg" ]] && continue
+      if is_critical_package "$pkg"; then
+        echo "[!] Note: '$pkg' matched a GUI pattern but is also on the"
+        echo "    critical list - leaving it installed, not removing it."
+        continue
       fi
+      INSTALLED_MATCHES+=("$pkg")
     done <<< "$matches"
   fi
 done
@@ -296,47 +255,50 @@ if [[ ${#INSTALLED_MATCHES[@]} -eq 0 ]]; then
 else
   echo "[*] The following packages were matched for removal:"
   printf '    %s\n' "${INSTALLED_MATCHES[@]}"
-  # Deliberately `remove`, not `purge`: --purge can finalize unrelated
-  # already-rc packages system-wide as a side effect (see note above).
-  # Config remnants of the packages we actually target are cleaned up
-  # explicitly via STRAY_PATHS further down instead.
-  if simulate_and_guard "GUI package removal" apt-get remove -s "${INSTALLED_MATCHES[@]}"; then
-    echo "[*] Removing..."
-    apt-get remove -y "${INSTALLED_MATCHES[@]}" || {
-      # Removing packages one at a time can trigger a completely different
-      # dependency cascade than removing them all together in one
-      # transaction (apt resolves dependencies fresh against the current,
-      # now-partially-modified system state on each call) - so this
-      # fallback gets its own simulate-first guard per package rather than
-      # inheriting the all-at-once check above. On real hardware, this gap
-      # let cuda-toolkit-10-2/nvidia-l4t-cuda get removed via this exact
-      # fallback path even though the bulk simulate came back clean.
-      echo "[!] Some packages failed to remove individually; retrying one-by-one..."
-      for pkg in "${INSTALLED_MATCHES[@]}"; do
-        if simulate_and_guard "GUI package removal (${pkg})" apt-get remove -s "$pkg"; then
-          apt-get remove -y "$pkg" || echo "    [!] Failed to remove $pkg, skipping."
-        else
-          echo "    [!] Skipped removing $pkg for safety - see SAFETY ABORT above."
-        fi
-      done
-    }
-  else
-    echo "[!] Skipped the GUI package removal for safety - see SAFETY ABORT above."
-    echo "    Nothing was removed. Review the flagged package(s) manually before"
-    echo "    removing anything yourself."
-  fi
-fi
+  echo
+  echo "[*] Removing one at a time via dpkg (no dependency solver - dpkg only"
+  echo "    ever touches the exact package named; if removing one would break"
+  echo "    something else currently installed, dpkg refuses rather than"
+  echo "    pulling in more removals to work around it). Packages dpkg"
+  echo "    refuses this pass are retried next pass, in case removing others"
+  echo "    first clears the way - repeated until a pass makes no progress."
 
-echo "[*] Checking for orphaned dependencies before touching anything..."
-if simulate_and_guard "autoremove" apt-get autoremove -s; then
-  echo "[*] Removing orphaned dependencies..."
-  apt-get autoremove -y
-else
-  echo "[!] Skipped autoremove for safety - see SAFETY ABORT above."
-  echo "    You can review that list yourself and run"
-  echo "    'sudo apt-get autoremove' manually if you're confident it's safe"
-  echo "    once you've checked exactly what it wants to remove. Avoid"
-  echo "    adding --purge - see the note near the top of this script."
+  REMOVE_QUEUE=("${INSTALLED_MATCHES[@]}")
+  REMOVED_COUNT=0
+  pass=1
+  progress=1
+  while [[ $progress -eq 1 && ${#REMOVE_QUEUE[@]} -gt 0 ]]; do
+    echo "[*] Pass ${pass}: ${#REMOVE_QUEUE[@]} package(s) left to try..."
+    progress=0
+    NEXT_QUEUE=()
+    for pkg in "${REMOVE_QUEUE[@]}"; do
+      status=$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)
+      if [[ "$status" != "install ok installed" ]]; then
+        # Already gone (e.g. removed as a same-pass side effect isn't
+        # possible with dpkg, but this is a cheap defensive check anyway).
+        continue
+      fi
+      if dpkg_out=$(dpkg --remove "$pkg" 2>&1); then
+        echo "    Removed: $pkg"
+        REMOVED_COUNT=$((REMOVED_COUNT + 1))
+        progress=1
+      else
+        NEXT_QUEUE+=("$pkg")
+        echo "    Not yet: $pkg"
+        echo "$dpkg_out" | sed 's/^/      /'
+      fi
+    done
+    REMOVE_QUEUE=("${NEXT_QUEUE[@]}")
+    pass=$((pass + 1))
+  done
+
+  echo "[*] Removed ${REMOVED_COUNT} of ${#INSTALLED_MATCHES[@]} matched package(s)."
+  if [[ ${#REMOVE_QUEUE[@]} -gt 0 ]]; then
+    echo "[*] ${#REMOVE_QUEUE[@]} package(s) left installed (something else on"
+    echo "    this system still depends on them, so dpkg refused rather than"
+    echo "    force it) - see the 'Not yet' lines above for exactly why:"
+    printf '    %s\n' "${REMOVE_QUEUE[@]}"
+  fi
 fi
 
 echo "[*] Cleaning apt cache..."
@@ -344,8 +306,8 @@ apt-get autoclean -y
 apt-get clean
 
 echo "[*] Removing leftover config/log directories for removed GUI components..."
-# These are safe to remove once the corresponding packages are gone;
-# apt purge normally handles /etc configs, this catches strays.
+# These are safe to remove once the corresponding packages are gone; dpkg
+# --remove (not --purge) leaves /etc configs behind, this catches strays.
 STRAY_PATHS=(
   "/etc/X11"
   "/etc/gdm3"

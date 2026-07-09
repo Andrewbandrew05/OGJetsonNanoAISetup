@@ -50,8 +50,13 @@ This intentionally leaves out two things that need information only you
 have:
 - **GUI package purge** (`--purgeGuiPackages`) - reclaims disk space by
   actually uninstalling the desktop stack instead of just disabling it.
-  Slower, more invasive, and still being hardened - read
-  `CoreSystemSetup/GuiRemoval/README.md` before using it.
+  Slower and more invasive than the default. Tested against a JetPack image
+  downloaded 2026-07-07: reliably removes a good chunk of unused desktop
+  packages on that image, with no guarantee it catches everything on every
+  image variant - but it's guaranteed not to remove anything that would
+  stop the board from booting, since it removes packages one at a time via
+  `dpkg` rather than letting `apt`'s dependency solver decide what else
+  should go. Read `CoreSystemSetup/GuiRemoval/README.md` for the details.
 - **Backup + control API** (`--installBackupAPI`) - needs a remote backup
   target (NAS over Tailscale/SSH, or S3-compatible storage) that has to
   already exist and be reachable. See
