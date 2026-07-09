@@ -79,6 +79,15 @@ echo "     if this differs from what's in the systemd unit below, adjust ExecSta
 
 mkdir -p "$PIPER_DIR/data"
 
+# This whole script runs as root (invoked via sudo), so everything created
+# under $PIPER_DIR from here on - piper/, wyoming-piper/, data/ - ends up
+# root-owned, even though $PIPER_DIR itself was chowned to $SERVICE_USER
+# back in step 2. The systemd service below runs as $SERVICE_USER, which
+# can still read/execute root-owned files but can't write into a root-owned
+# data/ directory - and it needs to, to download the voice model on first
+# start. Re-chown everything now to match who actually needs to write here.
+chown -R "$SERVICE_USER":"$SERVICE_USER" "$PIPER_DIR"
+
 echo "==> [6/6] Installing systemd service"
 sudo tee /etc/systemd/system/wyoming-piper.service > /dev/null << EOF
 [Unit]
