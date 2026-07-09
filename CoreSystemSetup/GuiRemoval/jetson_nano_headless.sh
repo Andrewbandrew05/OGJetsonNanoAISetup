@@ -23,7 +23,7 @@
 #  - --purge-packages does NOT touch nvidia-l4t-* packages (GPU/CUDA/
 #    multimedia drivers). Removing those can break CUDA support or the
 #    ability to reflash.
-#  - --purge-packages simulates the purge AND the autoremove step first,
+#  - --purge-packages simulates the removal AND the autoremove step first,
 #    and checks the proposed removal list against a denylist of
 #    boot-critical packages (kernel, initramfs-tools, nvidia-l4t-*,
 #    systemd, dbus, network-manager, openssh, etc). If anything on that
@@ -32,6 +32,17 @@
 #    script ran `apt-get autoremove --purge` unconditionally, with no such
 #    check - on real hardware this cascaded into removing far more than
 #    the targeted GUI packages and left the board unable to boot.)
+#  - Uses `apt-get remove`/`autoremove`, never `--purge`, for its own
+#    actions. `--purge` doesn't just act on the current transaction - it
+#    can also finalize (fully purge) OTHER packages already sitting in
+#    "removed but not purged" state system-wide as routine dpkg
+#    housekeeping, and that side effect isn't reliably caught by the
+#    simulate-first check above (it happened on real hardware even with
+#    the guard active: nvidia-l4t-jetson-multimedia-api and a couple of
+#    CUDA packages were already in that state from something unrelated to
+#    this script, and got swept up anyway). Config remnants of the
+#    packages we actually target are cleaned up separately via a fixed,
+#    reviewed STRAY_PATHS list instead of relying on --purge.
 #  - Backs up the installed package list before making changes.
 #  - Requires an explicit "yes" confirmation before making changes.
 #  - Meant to be run over SSH, not from the desktop session itself.
@@ -236,6 +247,31 @@ GUI_PACKAGES=(
   "evince*"
 )
 
+# --- Pre-flight check: warn about anything already sitting in "removed but
+# not purged" (rc) state before we do anything. This matters because
+# apt-get's --purge flag doesn't just act on the current transaction - it
+# can also finalize (fully purge) OTHER packages already in rc state
+# system-wide as routine dpkg housekeeping, and that side effect isn't
+# reliably shown by `apt-get -s` simulation the same way it happens for
+# real. That's exactly how a --purge run got past the simulate-based guard
+# below on real hardware. Using plain `remove`/`autoremove` (no --purge)
+# for our own actions avoids triggering that side effect at all; this
+# pre-flight scan just surfaces anything already in that state so you know
+# about it going in.
+PREEXISTING_RC=$(dpkg -l | awk '$1=="rc"{print $2}')
+if [[ -n "$PREEXISTING_RC" ]]; then
+  echo "[*] Note: the following packages are already in 'removed, config"
+  echo "    remaining' state on this system (not caused by this script):"
+  echo "$PREEXISTING_RC" | sed 's/^/    /'
+  while IFS= read -r pkg; do
+    [[ -z "$pkg" ]] && continue
+    if is_critical_package "$pkg"; then
+      echo "[!] Note: '$pkg' is on the critical list and already in this"
+      echo "    state from before this script ran - not something we did."
+    fi
+  done <<< "$PREEXISTING_RC"
+fi
+
 echo "[*] Resolving which of the above are actually installed..."
 INSTALLED_MATCHES=()
 for pattern in "${GUI_PACKAGES[@]}"; do
@@ -252,34 +288,39 @@ for pattern in "${GUI_PACKAGES[@]}"; do
 done
 
 if [[ ${#INSTALLED_MATCHES[@]} -eq 0 ]]; then
-  echo "[*] No matching GUI packages found installed. Skipping purge step."
+  echo "[*] No matching GUI packages found installed. Skipping removal step."
 else
   echo "[*] The following packages were matched for removal:"
   printf '    %s\n' "${INSTALLED_MATCHES[@]}"
-  if simulate_and_guard "GUI package purge" apt-get purge -s "${INSTALLED_MATCHES[@]}"; then
-    echo "[*] Purging..."
-    apt-get purge -y "${INSTALLED_MATCHES[@]}" || {
-      echo "[!] Some packages failed to purge individually; retrying one-by-one..."
+  # Deliberately `remove`, not `purge`: --purge can finalize unrelated
+  # already-rc packages system-wide as a side effect (see note above).
+  # Config remnants of the packages we actually target are cleaned up
+  # explicitly via STRAY_PATHS further down instead.
+  if simulate_and_guard "GUI package removal" apt-get remove -s "${INSTALLED_MATCHES[@]}"; then
+    echo "[*] Removing..."
+    apt-get remove -y "${INSTALLED_MATCHES[@]}" || {
+      echo "[!] Some packages failed to remove individually; retrying one-by-one..."
       for pkg in "${INSTALLED_MATCHES[@]}"; do
-        apt-get purge -y "$pkg" || echo "    [!] Failed to purge $pkg, skipping."
+        apt-get remove -y "$pkg" || echo "    [!] Failed to remove $pkg, skipping."
       done
     }
   else
-    echo "[!] Skipped the GUI package purge for safety - see SAFETY ABORT above."
+    echo "[!] Skipped the GUI package removal for safety - see SAFETY ABORT above."
     echo "    Nothing was removed. Review the flagged package(s) manually before"
-    echo "    purging anything yourself."
+    echo "    removing anything yourself."
   fi
 fi
 
 echo "[*] Checking for orphaned dependencies before touching anything..."
-if simulate_and_guard "autoremove" apt-get autoremove --purge -s; then
+if simulate_and_guard "autoremove" apt-get autoremove -s; then
   echo "[*] Removing orphaned dependencies..."
-  apt-get autoremove -y --purge
+  apt-get autoremove -y
 else
   echo "[!] Skipped autoremove for safety - see SAFETY ABORT above."
   echo "    You can review that list yourself and run"
-  echo "    'sudo apt-get autoremove --purge' manually if you're confident"
-  echo "    it's safe once you've checked exactly what it wants to remove."
+  echo "    'sudo apt-get autoremove' manually if you're confident it's safe"
+  echo "    once you've checked exactly what it wants to remove. Avoid"
+  echo "    adding --purge - see the note near the top of this script."
 fi
 
 echo "[*] Cleaning apt cache..."
