@@ -1,7 +1,8 @@
 # Piper setup
 
 Installs Piper TTS as a Wyoming-protocol systemd service (`wyoming-piper`),
-listening on port 10200.
+listening on port 10200 (override with `WYOMING_PIPER_PORT=10201
+./install-wyoming-piper.sh`, or via `setup.sh`: `--piperPort=10201`).
 
 CPU-only by design: Piper's CUDA-accelerated ONNX Runtime path only exists
 for newer JetPack/CUDA builds (Orin-series Jetsons), and the original

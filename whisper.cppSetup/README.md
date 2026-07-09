@@ -33,7 +33,17 @@ chmod +x install-whisper-cpp.sh
 
 This builds whisper.cpp into `/opt/whisper.cpp`, downloads the `base.en`
 model, and installs+starts a systemd service (`whisper-cpp-server`) serving
-an HTTP transcription API on `127.0.0.1:8080`.
+an HTTP transcription API on `127.0.0.1:8080` (override with
+`WHISPER_SERVER_PORT=9000 ./install-whisper-cpp.sh`, or via `setup.sh`:
+`--whisperPort=9000`).
+
+**This is a plain REST endpoint, not the Wyoming protocol.** Home
+Assistant's Wyoming integration expects a Wyoming-protocol TCP service, the
+same way `wyoming-piperSetup` provides one for TTS - this whisper.cpp
+service won't plug into that integration directly. You'd need either a
+Wyoming-protocol wrapper in front of this REST API, or a Wyoming-native STT
+service instead (e.g. `wyoming-faster-whisper`) to get local STT working in
+HA via the Wyoming integration.
 
 ## Why the stock build fails on this hardware, in order
 

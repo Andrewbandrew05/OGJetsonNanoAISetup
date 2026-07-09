@@ -40,6 +40,9 @@
 #   # running non-interactively):
 #   NANO_BACKUP_AUTO=yes|no
 #
+# Default port: 8843. Override with NANO_BACKUP_API_PORT=9000, or via
+# setup.sh: --backupApiPort=9000
+#
 # If NANO_SETUP_AUTO_YES/NANO_SETUP_AUTO_YES_OS is set (setup.sh's
 # --bypassAllChecks/--bypassInstallerChecks) and NANO_BACKUP_TARGET is not
 # set, this script fails fast with an error instead of hanging on a prompt.
@@ -60,6 +63,7 @@ INSTALL_DIR="/opt/nano-ai-backup"
 CONF_DIR="/etc/nano-ai-backup"
 RESTIC_ENV="${CONF_DIR}/restic.env"
 API_TOKEN_FILE="${CONF_DIR}/api_token"
+API_PORT="${NANO_BACKUP_API_PORT:-8843}"
 
 mkdir -p "$INSTALL_DIR" "$CONF_DIR"
 chmod 700 "$CONF_DIR"
@@ -327,6 +331,11 @@ def trigger_reboot(authorization: Optional[str] = Header(default=None)):
 PYEOF
 
 # --- Startup wrapper: bind to Tailscale IP once available, else localhost ---
+# API_PORT is read from the process environment at runtime (set via the
+# systemd unit's Environment= line below), not substituted here - this
+# heredoc is intentionally quoted so $BIND_HOST/$TS_IP are also left for
+# this script to evaluate itself when it actually runs, not at generation
+# time.
 cat > "${INSTALL_DIR}/start-api.sh" <<'EOF'
 #!/bin/bash
 set -e
@@ -339,8 +348,9 @@ for i in $(seq 1 30); do
   fi
   sleep 2
 done
-echo "[start-api] Binding to ${BIND_HOST}:8843"
-exec /opt/nano-ai-backup/venv/bin/uvicorn app:app --app-dir /opt/nano-ai-backup --host "$BIND_HOST" --port 8843
+API_PORT="${API_PORT:-8843}"
+echo "[start-api] Binding to ${BIND_HOST}:${API_PORT}"
+exec /opt/nano-ai-backup/venv/bin/uvicorn app:app --app-dir /opt/nano-ai-backup --host "$BIND_HOST" --port "$API_PORT"
 EOF
 chmod +x "${INSTALL_DIR}/start-api.sh"
 
@@ -352,6 +362,7 @@ After=network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]
+Environment="API_PORT=${API_PORT}"
 ExecStart=${INSTALL_DIR}/start-api.sh
 Restart=on-failure
 RestartSec=5
@@ -375,9 +386,9 @@ echo "(falls back to 127.0.0.1 until then). If Tailscale isn't set up yet,"
 echo "run its installer, then: sudo systemctl restart nano-ai-api"
 echo
 echo "Example calls (replace <tailscale-ip> and <token>):"
-echo '  curl -H "Authorization: Bearer <token>" http://<tailscale-ip>:8843/status'
-echo '  curl -X POST -H "Authorization: Bearer <token>" http://<tailscale-ip>:8843/backup'
-echo '  curl -X POST -H "Authorization: Bearer <token>" http://<tailscale-ip>:8843/reboot'
+echo "  curl -H \"Authorization: Bearer <token>\" http://<tailscale-ip>:${API_PORT}/status"
+echo "  curl -X POST -H \"Authorization: Bearer <token>\" http://<tailscale-ip>:${API_PORT}/backup"
+echo "  curl -X POST -H \"Authorization: Bearer <token>\" http://<tailscale-ip>:${API_PORT}/reboot"
 echo
 if [[ $ENABLE_AUTO_BACKUP -eq 1 ]]; then
   echo "A nightly backup is also scheduled automatically (systemd timer, 3am)."

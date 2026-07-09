@@ -19,6 +19,10 @@ Installs:
 All endpoints require a bearer token (generated at install time, printed at
 the end, and saved to `/etc/nano-ai-backup/api_token`).
 
+Listens on port 8843 by default - override with
+`NANO_BACKUP_API_PORT=9000 ./backup_api_install.sh`, or via `setup.sh`:
+`--backupApiPort=9000`.
+
 ## Non-interactive install
 
 By default this script prompts for where to store backups (remote

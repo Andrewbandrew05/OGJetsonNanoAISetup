@@ -67,6 +67,19 @@
 #                          CoreSystemSetup/SystemUpgrade/README.md for the
 #                          reasoning either way.
 #
+# Default ports (all externally-facing services):
+#   llama.cpp          8081  http://<nano-ip>:8081  (OpenAI-compatible API + web UI)
+#   whisper.cpp         8080  http://<nano-ip>:8080  (plain REST API - NOT Wyoming protocol)
+#   wyoming-piper      10200  tcp://<nano-ip>:10200  (Wyoming protocol - HA-ready)
+#   backup/control API  8843  http://<tailscale-ip>:8843  (falls back to 127.0.0.1 until Tailscale is up)
+#
+# Custom ports (each only takes effect for that service if it's actually
+# being installed this run):
+#   --llamaPort=9000
+#   --whisperPort=9001
+#   --piperPort=10201
+#   --backupApiPort=9002
+#
 # Usage (from a local clone):
 #   chmod +x setup.sh
 #   sudo ./setup.sh                        # interactive: numbers or flags, your choice
@@ -110,6 +123,10 @@ BYPASS_ALL=0
 BYPASS_INSTALLER=0
 PURGE_GUI_PACKAGES=0
 FORCE_NEW_CONFIGS=0
+LLAMA_PORT=""
+WHISPER_PORT=""
+PIPER_PORT=""
+BACKUP_API_PORT=""
 
 parse_flag_token() {
   local arg="$1"
@@ -121,6 +138,10 @@ parse_flag_token() {
     --bypassInstallerChecks) BYPASS_INSTALLER=1 ;;
     --purgeGuiPackages) PURGE_GUI_PACKAGES=1 ;;
     --forceNewConfigs) FORCE_NEW_CONFIGS=1 ;;
+    --llamaPort=*) LLAMA_PORT="${arg#*=}" ;;
+    --whisperPort=*) WHISPER_PORT="${arg#*=}" ;;
+    --piperPort=*) PIPER_PORT="${arg#*=}" ;;
+    --backupApiPort=*) BACKUP_API_PORT="${arg#*=}" ;;
     -h|--help) print_help; exit 0 ;;
     *)
       echo "[!] Unknown flag: $arg (--help for usage)" >&2
@@ -155,10 +176,10 @@ CORE_ORDER=(gui python39 gcc9 swap jtop sshharden)
 
 OPTIONAL_KEYS=(llama whisper piper backup)
 declare -A OPTIONAL_LABEL=(
-  [llama]="Install llama.cpp (LLM inference server)"
-  [whisper]="Install whisper.cpp (speech-to-text)"
-  [piper]="Install wyoming-piper (text-to-speech)"
-  [backup]="Install backup + control API (restic + Home Assistant endpoints)"
+  [llama]="Install llama.cpp (LLM inference server, port 8081 by default)"
+  [whisper]="Install whisper.cpp (speech-to-text, plain REST API on port 8080 by default - NOT Wyoming protocol)"
+  [piper]="Install wyoming-piper (text-to-speech, Wyoming protocol, port 10200 by default)"
+  [backup]="Install backup + control API (restic + Home Assistant endpoints, port 8843 by default)"
 )
 declare -A OPTIONAL_PATH=(
   [llama]="llama.cppSetup/install-llama-cpp-nano-service.sh"
@@ -272,6 +293,13 @@ export NANO_GUI_PURGE_PACKAGES=$PURGE_GUI_PACKAGES
 # maintainer's version on a config file conflict instead of the default
 # (keep the current one).
 export NANO_SYSUPGRADE_FORCE_NEW=$FORCE_NEW_CONFIGS
+
+# Custom ports - only exported if actually given, so each script's own
+# default (documented in its own header comment) applies otherwise.
+[[ -n "$LLAMA_PORT" ]] && export LLAMA_SERVICE_PORT="$LLAMA_PORT"
+[[ -n "$WHISPER_PORT" ]] && export WHISPER_SERVER_PORT="$WHISPER_PORT"
+[[ -n "$PIPER_PORT" ]] && export WYOMING_PIPER_PORT="$PIPER_PORT"
+[[ -n "$BACKUP_API_PORT" ]] && export NANO_BACKUP_API_PORT="$BACKUP_API_PORT"
 
 # How many times to attempt each script before giving up on it (1 = no
 # retry). Overridable via env var for anyone who wants tighter/looser

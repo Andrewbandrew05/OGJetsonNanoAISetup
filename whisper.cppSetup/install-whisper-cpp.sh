@@ -14,6 +14,10 @@
 #
 # See README.md in this repo for a full explanation of why each patch below
 # is necessary.
+#
+# Default port: 8080 (plain HTTP REST API, NOT the Wyoming protocol - see
+# README.md). Override with WHISPER_SERVER_PORT=9000, or via setup.sh:
+# --whisperPort=9000
 
 set -euo pipefail
 
@@ -22,7 +26,7 @@ WHISPER_VERSION="v1.5.4"
 CUDA_ARCH="sm_53"          # Jetson Nano (original). Orin Nano = sm_87, Xavier = sm_72.
 MODEL="base.en"            # tiny.en / base.en / small.en / medium.en ...
 SERVICE_USER="${SUDO_USER:-$USER}"
-SERVER_PORT="8080"
+SERVER_PORT="${WHISPER_SERVER_PORT:-8080}"
 
 echo "==> [1/7] Installing build dependencies"
 sudo apt update
@@ -137,6 +141,6 @@ echo "==> Service status:"
 sudo systemctl status whisper-cpp-server.service --no-pager || true
 
 echo ""
-echo "Done. whisper.cpp CUDA server is running at http://127.0.0.1:8080 (localhost only)."
+echo "Done. whisper.cpp CUDA server is running at http://127.0.0.1:${SERVER_PORT} (localhost only)."
 echo "Test it with a wav file:"
 echo "  curl 127.0.0.1:${SERVER_PORT}/inference -H \"Content-Type: multipart/form-data\" -F file=@/path/to/your.wav -F response_format=text"

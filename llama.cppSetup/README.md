@@ -8,6 +8,9 @@ service (`llama-cpp-server`) serving the HTTP API/web UI on port **8081**
 First startup takes a few minutes while the model downloads and converts -
 watch progress with `sudo journalctl -u llama-cpp-server.service -f`.
 
+Override the port with `LLAMA_SERVICE_PORT=9000 ./install-llama-cpp-nano-service.sh`,
+or via `setup.sh`: `--llamaPort=9000`.
+
 Run this via `sudo`, not as a plain user with internal `sudo` calls as the
 script's own header comment suggests - the systemd service is created to
 run as whichever user invoked the script (`$SUDO_USER`), so running it

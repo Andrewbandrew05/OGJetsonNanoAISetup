@@ -7,12 +7,17 @@
 #   ./install-llama-cpp-nano-service.sh
 #
 # Run as your normal user (not root) — it will sudo internally where needed.
+#
+# Default port: 8081 (http://<nano-ip>:8081, OpenAI-compatible API + web UI).
+# Override with: LLAMA_SERVICE_PORT=9000 ./install-llama-cpp-nano-service.sh
+# Via setup.sh: --llamaPort=9000
 
 set -euo pipefail
 
 SERVICE_USER="${SUDO_USER:-$(whoami)}"
-SERVICE_PORT="8081"   # deliberately NOT 8080, to avoid clashing with the
-                      # whisper.cpp server already bound to 127.0.0.1:8080
+# Deliberately NOT 8080 by default, to avoid clashing with the whisper.cpp
+# server already bound to 127.0.0.1:8080. Override with LLAMA_SERVICE_PORT.
+SERVICE_PORT="${LLAMA_SERVICE_PORT:-8081}"
 MODEL_HF="ggml-org/gemma-3-1b-it-GGUF"
 
 echo "=== Step 1: Ensuring curl is installed ==="

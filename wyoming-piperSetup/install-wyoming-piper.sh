@@ -26,12 +26,16 @@
 # back in. v1.6.3 is the last tag before that change; v2.0.0 is the first
 # tag with it. Cloning main (unpinned) will build a service that
 # immediately crash-loops with "unrecognized arguments: --piper ...".
+#
+# Default port: 10200 (real Wyoming protocol - this one IS ready for HA's
+# Wyoming integration). Override with WYOMING_PIPER_PORT=10201, or via
+# setup.sh: --piperPort=10201
 
 set -euo pipefail
 
 PIPER_DIR="/opt/wyoming-piper"
 VOICE="en_US-lessac-medium"      # https://rhasspy.github.io/piper-samples/ for other voices
-WYOMING_PORT="10200"
+WYOMING_PORT="${WYOMING_PIPER_PORT:-10200}"
 SERVICE_USER="${SUDO_USER:-$USER}"
 
 echo "==> [1/6] Installing Python 3.9 (required by wyoming-piper; Jetson ships 3.6/3.8 only)"
