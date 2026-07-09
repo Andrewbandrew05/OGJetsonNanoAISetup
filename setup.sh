@@ -2,9 +2,23 @@
 #
 # setup.sh
 #
-# Single entry point for OGJetsonNanoAISetup. Either presents a menu of
-# available scripts, or - if given install flags - runs a preconfigured
-# package non-interactively. Run order is always:
+# Single entry point for OGJetsonNanoAISetup.
+#
+# Run it with NO arguments (sudo ./setup.sh) for an interactive installer:
+# it prints this help text, a numbered menu of every available script, and
+# a prompt where you can either:
+#   - type numbers to run individual scripts (e.g. 1 3 4), or 'all' for
+#     everything, or
+#   - type flags to run one of the preconfigured packages below (e.g.
+#     --installAll --bypassAllChecks), exactly as you would on the command
+#     line.
+#
+# Run it WITH arguments (sudo ./setup.sh --installAll --bypassAllChecks)
+# to skip the interactive prompt entirely and go straight to that
+# preconfigured package - this is what you want for scripted/unattended
+# use (curl | sudo bash, cron, etc).
+#
+# Run order is always:
 #   1. Core system setup scripts (fixed internal order, see CORE_ORDER)
 #   2. AI/service installers you selected (llama.cpp, whisper.cpp, piper,
 #      backup+API)
@@ -27,8 +41,6 @@
 #                          NANO_BACKUP_* env vars to run non-interactively -
 #                          see CoreSystemSetup/BackupAPISetup/README.md.
 #
-# If no install flag is given, you get the interactive menu (unchanged).
-#
 # Prompt-bypass flags:
 #   --bypassAllChecks       Auto-accept every confirmation, including
 #                          OS-level ones (GUI removal's purge confirmation)
@@ -38,16 +50,26 @@
 #                          OS-level confirmations (GUI removal) still ask.
 #
 # GUI removal mode:
-#   --purgeGuiPackages      Also purge the actual GUI/desktop packages to
+#   --purgeGuiPackages      Also remove the actual GUI/desktop packages to
 #                          reclaim disk space (GUI removal's --purge-
 #                          packages mode), instead of the default
 #                          disable-only behavior. Slower, and independent
 #                          of the bypass flags above - has to be passed
 #                          explicitly either way.
 #
+# System upgrade config-file policy:
+#   --forceNewConfigs       When the system package upgrade hits a config
+#                          file that was locally modified (e.g. a Jetson-
+#                          specific file JetPack's first-boot setup
+#                          customized), take the package maintainer's new
+#                          version instead of the default (keep the
+#                          current one). See
+#                          CoreSystemSetup/SystemUpgrade/README.md for the
+#                          reasoning either way.
+#
 # Usage (from a local clone):
 #   chmod +x setup.sh
-#   sudo ./setup.sh
+#   sudo ./setup.sh                        # interactive: numbers or flags, your choice
 #   sudo ./setup.sh --installAll --bypassAllChecks
 #   sudo ./setup.sh --installAll --installBackupAPI --purgeGuiPackages --bypassAllChecks
 #
@@ -59,8 +81,11 @@ set -uo pipefail
 REPO_URL="https://github.com/Andrewbandrew05/OGJetsonNanoAISetup.git"
 REPO_DIR_NAME="OGJetsonNanoAISetup"
 
+# Prints every leading comment line of this file (skipping the shebang),
+# stopping at the first non-comment line - so this always reflects the
+# header above without needing a hardcoded line range to keep in sync.
 print_help() {
-  sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "${BASH_SOURCE[0]}"
 }
 
 # --help/-h works without root, so check for it before the root requirement.
@@ -76,15 +101,18 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-# --- Parse flags ---
+# --- Flag state + parser (shared by direct CLI args and the interactive
+# prompt below - both end up calling parse_flag_token for each word) ---
 INSTALL_ALL=0
 INSTALL_MODELS=0
 INSTALL_BACKUP=0
 BYPASS_ALL=0
 BYPASS_INSTALLER=0
 PURGE_GUI_PACKAGES=0
+FORCE_NEW_CONFIGS=0
 
-for arg in "$@"; do
+parse_flag_token() {
+  local arg="$1"
   case "$arg" in
     --installAll) INSTALL_ALL=1 ;;
     --installModels) INSTALL_MODELS=1 ;;
@@ -92,20 +120,158 @@ for arg in "$@"; do
     --bypassAllChecks) BYPASS_ALL=1 ;;
     --bypassInstallerChecks) BYPASS_INSTALLER=1 ;;
     --purgeGuiPackages) PURGE_GUI_PACKAGES=1 ;;
+    --forceNewConfigs) FORCE_NEW_CONFIGS=1 ;;
+    -h|--help) print_help; exit 0 ;;
     *)
       echo "[!] Unknown flag: $arg (--help for usage)" >&2
       exit 1
       ;;
   esac
-done
+}
+
+# --- Define available scripts (static - doesn't need the repo cloned yet) ---
+CORE_KEYS=(gui python39 gcc9 swap jtop sshharden)
+declare -A CORE_LABEL=(
+  [gui]="Boot to console instead of GUI (disables display manager; packages kept unless run manually with --purge-packages)"
+  [python39]="Install Python 3.9 (source build - deadsnakes PPA no longer covers Bionic, needed for wyoming-piper)"
+  [gcc9]="Install gcc-9/g++-9 (ubuntu-toolchain-r/test PPA, needed for whisper.cpp)"
+  [swap]="Create 4GB swap file"
+  [jtop]="Install jtop (jetson-stats)"
+  [sshharden]="Harden SSH (key-only login - do this last of the core steps)"
+)
+declare -A CORE_PATH=(
+  [gui]="CoreSystemSetup/GuiRemoval/jetson_nano_headless.sh"
+  [python39]="CoreSystemSetup/Python39Upgrade/python39_upgrade.sh"
+  [gcc9]="CoreSystemSetup/Gcc9Upgrade/gcc9_upgrade.sh"
+  [swap]="CoreSystemSetup/SwapFileCreation/swap_setup.sh"
+  [jtop]="CoreSystemSetup/JtopInstallation/jtop_install.sh"
+  [sshharden]="CoreSystemSetup/SSHHardener/ssh_harden.sh"
+)
+# Fixed run order for core items regardless of selection order. GUI removal
+# runs first among these; the Python 3.9 and gcc-9 builds run right after
+# it (so they're ready before wyoming-piper/whisper.cpp need them); SSH
+# hardening runs last since it changes login behavior.
+CORE_ORDER=(gui python39 gcc9 swap jtop sshharden)
+
+OPTIONAL_KEYS=(llama whisper piper backup)
+declare -A OPTIONAL_LABEL=(
+  [llama]="Install llama.cpp (LLM inference server)"
+  [whisper]="Install whisper.cpp (speech-to-text)"
+  [piper]="Install wyoming-piper (text-to-speech)"
+  [backup]="Install backup + control API (restic + Home Assistant endpoints)"
+)
+declare -A OPTIONAL_PATH=(
+  [llama]="llama.cppSetup/install-llama-cpp-nano-service.sh"
+  [whisper]="whisper.cppSetup/install-whisper-cpp.sh"
+  [piper]="wyoming-piperSetup/install-wyoming-piper.sh"
+  [backup]="CoreSystemSetup/BackupAPISetup/backup_api_install.sh"
+)
+OPTIONAL_ORDER=(llama whisper piper backup)
+
+SYSUPGRADE_PATH="CoreSystemSetup/SystemUpgrade/system_upgrade.sh"
+TAILSCALE_PATH="CoreSystemSetup/TaiscaleSetup/tailscale_install.sh"
+
+ALL_KEYS=("${CORE_KEYS[@]}" "${OPTIONAL_KEYS[@]}" sysupgrade tailscale)
+declare -A ALL_LABEL
+for k in "${CORE_KEYS[@]}"; do ALL_LABEL[$k]="${CORE_LABEL[$k]}"; done
+for k in "${OPTIONAL_KEYS[@]}"; do ALL_LABEL[$k]="${OPTIONAL_LABEL[$k]}"; done
+ALL_LABEL[sysupgrade]="System package update/upgrade (always runs right before Tailscale, if selected)"
+ALL_LABEL[tailscale]="Install Tailscale (always runs last, if selected)"
+
+# Prints the numbered menu grouped by category, for the interactive prompt.
+print_menu() {
+  local i=1
+  echo "Core system setup:"
+  for k in "${CORE_KEYS[@]}"; do
+    printf "  %2d) %s\n" "$i" "${CORE_LABEL[$k]}"
+    INDEX_TO_KEY[$i]="$k"
+    ((i++))
+  done
+  echo
+  echo "AI / service installs:"
+  for k in "${OPTIONAL_KEYS[@]}"; do
+    printf "  %2d) %s\n" "$i" "${OPTIONAL_LABEL[$k]}"
+    INDEX_TO_KEY[$i]="$k"
+    ((i++))
+  done
+  echo
+  echo "Always-last steps (if selected):"
+  for k in sysupgrade tailscale; do
+    printf "  %2d) %s\n" "$i" "${ALL_LABEL[$k]}"
+    INDEX_TO_KEY[$i]="$k"
+    ((i++))
+  done
+}
+
+# --- Decide interactive vs direct mode ---
+declare -A SELECTED
+declare -A INDEX_TO_KEY
+RUN_MODE=""
+
+if [[ $# -gt 0 ]]; then
+  # Direct mode: args were given on the command line, so skip straight to
+  # running them - no interactive prompt.
+  for arg in "$@"; do
+    parse_flag_token "$arg"
+  done
+  RUN_MODE="flags"
+else
+  # Interactive mode: no args at all. Show the full picture up front, then
+  # accept either numbers or a flag string at one prompt.
+  print_help
+  echo
+  echo "=== OG Jetson Nano AI Setup ==="
+  echo
+  print_menu
+  echo
+  echo "Type numbers to run individual scripts (e.g. 1 3 4), or 'all' for"
+  echo "everything, OR type flags to run a preconfigured package exactly as"
+  echo "you would on the command line (e.g. --installAll --bypassAllChecks):"
+  read -rp "> " RESPONSE
+
+  if [[ -z "${RESPONSE// }" ]]; then
+    echo "Nothing entered. Exiting."
+    exit 0
+  fi
+
+  IS_FLAGS=0
+  for tok in $RESPONSE; do
+    [[ "$tok" == --* ]] && IS_FLAGS=1
+  done
+
+  if [[ $IS_FLAGS -eq 1 ]]; then
+    for tok in $RESPONSE; do
+      parse_flag_token "$tok"
+    done
+    RUN_MODE="flags"
+  else
+    RUN_MODE="numbers"
+    if [[ "$RESPONSE" == "all" ]]; then
+      for k in "${ALL_KEYS[@]}"; do SELECTED[$k]=1; done
+    else
+      for n in $RESPONSE; do
+        if [[ -n "${INDEX_TO_KEY[$n]:-}" ]]; then
+          SELECTED[${INDEX_TO_KEY[$n]}]=1
+        else
+          echo "[!] Ignoring invalid selection: $n"
+        fi
+      done
+    fi
+  fi
+fi
 
 FLAG_MODE=$(( INSTALL_ALL || INSTALL_MODELS || INSTALL_BACKUP ))
 
-# NANO_GUI_PURGE_PACKAGES - tells jetson_nano_headless.sh to also purge the
-# actual GUI/desktop packages (its --purge-packages mode) instead of just
-# disabling the display manager. Independent of the bypass flags above -
-# ---purgeGuiPackages has to be passed explicitly to turn this on.
+# NANO_GUI_PURGE_PACKAGES - tells jetson_nano_headless.sh to also remove
+# the actual GUI/desktop packages (its --purge-packages mode) instead of
+# just disabling the display manager. Independent of the bypass flags
+# above - --purgeGuiPackages has to be passed explicitly to turn this on.
 export NANO_GUI_PURGE_PACKAGES=$PURGE_GUI_PACKAGES
+
+# NANO_SYSUPGRADE_FORCE_NEW - tells system_upgrade.sh to take the package
+# maintainer's version on a config file conflict instead of the default
+# (keep the current one).
+export NANO_SYSUPGRADE_FORCE_NEW=$FORCE_NEW_CONFIGS
 
 # How many times to attempt each script before giving up on it (1 = no
 # retry). Overridable via env var for anyone who wants tighter/looser
@@ -154,64 +320,10 @@ cd "$REPO_ROOT"
 echo "[*] Using repo at: $REPO_ROOT"
 echo
 
-# --- Define available scripts ---
-# Keys, display labels, and paths (relative to repo root) for core items.
-CORE_KEYS=(gui python39 gcc9 swap jtop sshharden)
-declare -A CORE_LABEL=(
-  [gui]="Boot to console instead of GUI (disables display manager; packages kept unless run manually with --purge-packages)"
-  [python39]="Install Python 3.9 (source build - deadsnakes PPA no longer covers Bionic, needed for wyoming-piper)"
-  [gcc9]="Install gcc-9/g++-9 (ubuntu-toolchain-r/test PPA, needed for whisper.cpp)"
-  [swap]="Create 4GB swap file"
-  [jtop]="Install jtop (jetson-stats)"
-  [sshharden]="Harden SSH (key-only login - do this last of the core steps)"
-)
-declare -A CORE_PATH=(
-  [gui]="CoreSystemSetup/GuiRemoval/jetson_nano_headless.sh"
-  [python39]="CoreSystemSetup/Python39Upgrade/python39_upgrade.sh"
-  [gcc9]="CoreSystemSetup/Gcc9Upgrade/gcc9_upgrade.sh"
-  [swap]="CoreSystemSetup/SwapFileCreation/swap_setup.sh"
-  [jtop]="CoreSystemSetup/JtopInstallation/jtop_install.sh"
-  [sshharden]="CoreSystemSetup/SSHHardener/ssh_harden.sh"
-)
-# Fixed run order for core items regardless of selection order. GUI removal
-# runs first among these; the Python 3.9 and gcc-9 builds run right after
-# it (so they're ready before wyoming-piper/whisper.cpp need them); SSH
-# hardening runs last since it changes login behavior.
-CORE_ORDER=(gui python39 gcc9 swap jtop sshharden)
-
-OPTIONAL_KEYS=(llama whisper piper backup)
-declare -A OPTIONAL_LABEL=(
-  [llama]="Install llama.cpp (LLM inference server)"
-  [whisper]="Install whisper.cpp (speech-to-text)"
-  [piper]="Install wyoming-piper (text-to-speech)"
-  [backup]="Install backup + control API (restic + Home Assistant endpoints)"
-)
-declare -A OPTIONAL_PATH=(
-  [llama]="llama.cppSetup/install-llama-cpp-nano-service.sh"
-  [whisper]="whisper.cppSetup/install-whisper-cpp.sh"
-  [piper]="wyoming-piperSetup/install-wyoming-piper.sh"
-  [backup]="CoreSystemSetup/BackupAPISetup/backup_api_install.sh"
-)
-OPTIONAL_ORDER=(llama whisper piper backup)
-
-SYSUPGRADE_PATH="CoreSystemSetup/SystemUpgrade/system_upgrade.sh"
-TAILSCALE_PATH="CoreSystemSetup/TaiscaleSetup/tailscale_install.sh"
-
-# --- Build the menu (only shown if no install flag was given) ---
-ALL_KEYS=("${CORE_KEYS[@]}" "${OPTIONAL_KEYS[@]}" sysupgrade tailscale)
-declare -A ALL_LABEL
-for k in "${CORE_KEYS[@]}"; do ALL_LABEL[$k]="[core] ${CORE_LABEL[$k]}"; done
-for k in "${OPTIONAL_KEYS[@]}"; do ALL_LABEL[$k]="[install] ${OPTIONAL_LABEL[$k]}"; done
-ALL_LABEL[sysupgrade]="[core] System package update/upgrade (always runs right before Tailscale, if selected)"
-ALL_LABEL[tailscale]="[core] Install Tailscale (always runs last, if selected)"
-
-# --- Build the selection set. A bash associative array is a set, so
-# selecting the same script via more than one flag (or flag + menu) is a
-# no-op the second time - nothing runs twice. ---
-declare -A SELECTED
-
-if [[ $FLAG_MODE -eq 1 ]]; then
-  echo "=== OG Jetson Nano AI Setup (non-interactive package mode) ==="
+# --- Build the selection set from flags, if that's the mode we're in. (A
+# bash associative array is a set, so selecting the same script via more
+# than one flag is a no-op the second time - nothing runs twice.) ---
+if [[ "$RUN_MODE" == "flags" ]]; then
   if [[ $INSTALL_ALL -eq 1 ]]; then
     echo "[*] --installAll: core system setup + AI models + system upgrade + Tailscale"
     for k in "${CORE_KEYS[@]}"; do SELECTED[$k]=1; done
@@ -228,33 +340,6 @@ if [[ $FLAG_MODE -eq 1 ]]; then
     SELECTED[backup]=1
   fi
   echo
-else
-  echo "=== OG Jetson Nano AI Setup ==="
-  echo "Select which scripts to run. Core scripts run first (in a fixed safe"
-  echo "order), then installs, then Tailscale absolute last if selected."
-  echo
-  i=1
-  declare -A INDEX_TO_KEY
-  for k in "${ALL_KEYS[@]}"; do
-    printf "  %2d) %s\n" "$i" "${ALL_LABEL[$k]}"
-    INDEX_TO_KEY[$i]="$k"
-    ((i++))
-  done
-  echo
-  echo "Enter numbers separated by spaces (e.g. 1 3 4 6), or 'all' for everything:"
-  read -rp "> " SELECTION
-
-  if [[ "$SELECTION" == "all" ]]; then
-    for k in "${ALL_KEYS[@]}"; do SELECTED[$k]=1; done
-  else
-    for n in $SELECTION; do
-      if [[ -n "${INDEX_TO_KEY[$n]:-}" ]]; then
-        SELECTED[${INDEX_TO_KEY[$n]}]=1
-      else
-        echo "[!] Ignoring invalid selection: $n"
-      fi
-    done
-  fi
 fi
 
 if [[ ${#SELECTED[@]} -eq 0 ]]; then

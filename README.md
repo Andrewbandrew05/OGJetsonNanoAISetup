@@ -90,8 +90,15 @@ sudo ./setup.sh --installAll --installBackupAPI --purgeGuiPackages --bypassAllCh
 Every script under `CoreSystemSetup/`, `llama.cppSetup/`, `whisper.cppSetup/`,
 and `wyoming-piperSetup/` also works completely standalone
 (`sudo ./script.sh`), if you'd rather run things one at a time instead of
-through `setup.sh`. Or run `sudo ./setup.sh` with no flags at all for an
-interactive menu.
+through `setup.sh`.
+
+Run `sudo ./setup.sh` with no arguments at all for an interactive
+installer: it prints the full flag reference, a numbered menu of every
+script grouped by category, and one prompt where you can either type
+numbers (e.g. `1 3 4`, or `all`) to run individual scripts, or type a full
+flag string (e.g. `--installAll --bypassAllChecks`) to run a preconfigured
+package - same effect either way as passing those flags directly on the
+command line, just without needing to remember the flag names up front.
 
 `setup.sh` `chmod +x`'s each script it calls right before running it, so if
 you're doing one big run through `setup.sh` you only need to
@@ -102,5 +109,10 @@ script: `chmod +x script.sh` before `sudo ./script.sh`.
 `--bypassAllChecks` auto-accepts every remaining confirmation, including
 the GUI purge mode's prompt if you use it, plus apt/debconf dialogs.
 `--bypassInstallerChecks` only auto-accepts installer-level confirmations,
-not OS-level ones. `sudo ./setup.sh --help` lists everything, including the
-env vars the backup API installer needs for a non-interactive run.
+not OS-level ones. `--forceNewConfigs` changes how the system upgrade step
+handles a config file that's been locally modified (e.g. something
+JetPack's first-boot setup customized) - default is to keep the current
+one, this flag takes the package maintainer's version instead; see
+`CoreSystemSetup/SystemUpgrade/README.md` for the reasoning either way.
+`sudo ./setup.sh --help` lists everything, including the env vars the
+backup API installer needs for a non-interactive run.
