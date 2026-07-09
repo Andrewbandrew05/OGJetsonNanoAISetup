@@ -12,8 +12,9 @@ Installs:
    - `GET /status` - uptime, disk usage, last backup time
    - `POST /backup` - kicks off a backup immediately
    - `POST /reboot` - reboots the Nano
-3. A **nightly systemd timer** (3am) that runs the same backup automatically,
-   independent of the API.
+3. Optionally, a **nightly systemd timer** (3am) that runs the same backup
+   automatically, independent of the API - you're asked during install
+   whether you want this or prefer API-triggered backups only.
 
 All endpoints require a bearer token (generated at install time, printed at
 the end, and saved to `/etc/nano-ai-backup/api_token`).
@@ -38,6 +39,11 @@ NANO_BACKUP_S3_BUCKET=<bucket>
 NANO_BACKUP_S3_ENDPOINT=<endpoint, blank for AWS S3>
 NANO_BACKUP_S3_ACCESS_KEY=<access key id>
 NANO_BACKUP_S3_SECRET_KEY=<secret access key>
+
+# whether to also schedule automatic nightly backups (systemd timer, 3am),
+# in addition to the API's /backup endpoint - defaults to yes if unset and
+# running non-interactively:
+NANO_BACKUP_AUTO=yes|no
 ```
 
 If `setup.sh`'s `--bypassAllChecks`/`--bypassInstallerChecks` is active and
@@ -70,9 +76,43 @@ baseline.
 
 ## Restore
 
+Use `restore_backup.sh` rather than restoring by hand - it lists the
+available snapshots, lets you pick one (or just take the latest), and
+handles both scenarios:
+
+```bash
+sudo ./restore_backup.sh
+```
+
+- **Rolling back the same machine**: `/etc/nano-ai-backup/restic.env`
+  already exists, so it's used automatically - nothing to re-enter.
+- **Disaster recovery on a fresh/replacement Nano** (reflashed, or a whole
+  new board): no local config exists yet, so it asks for the same
+  repository details (SSH/Tailscale host or S3 bucket) `backup_api_install.sh`
+  originally asked for, plus the encryption password you saved somewhere
+  safe, before it can see any snapshots at all.
+
+The final "actually overwrite files on this machine" confirmation is a
+separate, explicit `--yes` flag on this script (`sudo ./restore_backup.sh --yes`)
+rather than something `setup.sh`'s bypass flags can trigger - restoring
+overwrites live files, and that shouldn't ever happen as a side effect of
+an unrelated unattended run.
+
+Env vars for scripting scenario 2 (same names as the install script, plus
+one new one):
+
+```bash
+NANO_BACKUP_TARGET=ssh|s3
+# ... same NANO_BACKUP_SSH_*/NANO_BACKUP_S3_* vars as above ...
+RESTIC_PASSWORD=<password>          # skips the password prompt if pre-exported
+NANO_RESTORE_SNAPSHOT=<id>|latest    # skips the "pick a snapshot" prompt
+```
+
+If you'd rather do it fully by hand:
+
 ```bash
 source /etc/nano-ai-backup/restic.env
-restic snapshots                 # see what's available
+restic snapshots                  # see what's available
 restic restore latest --target /  # restore the most recent snapshot
 ```
 

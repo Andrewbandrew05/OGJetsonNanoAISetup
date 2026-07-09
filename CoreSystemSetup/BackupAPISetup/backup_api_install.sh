@@ -35,6 +35,10 @@
 #   NANO_BACKUP_S3_ENDPOINT=<endpoint, blank for AWS S3>
 #   NANO_BACKUP_S3_ACCESS_KEY=<access key id>
 #   NANO_BACKUP_S3_SECRET_KEY=<secret access key>
+#   # whether to also run backups automatically on a nightly timer, in
+#   # addition to the API's /backup endpoint (defaults to yes if unset and
+#   # running non-interactively):
+#   NANO_BACKUP_AUTO=yes|no
 #
 # If NANO_SETUP_AUTO_YES/NANO_SETUP_AUTO_YES_OS is set (setup.sh's
 # --bypassAllChecks/--bypassInstallerChecks) and NANO_BACKUP_TARGET is not
@@ -211,8 +215,32 @@ echo "[\$(date)] Backup complete." | tee "${INSTALL_DIR}/last-backup.log"
 EOF
 chmod 700 "${INSTALL_DIR}/run-backup.sh"
 
-# --- Optional: schedule nightly backups too, not just API-triggered ones ---
-cat > /etc/systemd/system/nano-ai-backup.service <<EOF
+# --- Automatic nightly backups, or API-triggered only? ---
+if [[ -n "${NANO_BACKUP_AUTO:-}" ]]; then
+  case "${NANO_BACKUP_AUTO,,}" in
+    yes|y|1|true) ENABLE_AUTO_BACKUP=1 ;;
+    no|n|0|false) ENABLE_AUTO_BACKUP=0 ;;
+    *)
+      echo "[!] NANO_BACKUP_AUTO must be yes/no, got: ${NANO_BACKUP_AUTO}" >&2
+      exit 1
+      ;;
+  esac
+  echo "[*] NANO_BACKUP_AUTO=${NANO_BACKUP_AUTO} - skipping schedule prompt."
+elif [[ $AUTO_YES -eq 1 ]]; then
+  echo "[*] Non-interactive run, no NANO_BACKUP_AUTO set - defaulting to automatic nightly backups enabled."
+  ENABLE_AUTO_BACKUP=1
+else
+  echo
+  read -rp "Enable automatic nightly backups (systemd timer, 3am), in addition to the API? [Y/n]: " AUTO_CHOICE
+  case "${AUTO_CHOICE,,}" in
+    n|no) ENABLE_AUTO_BACKUP=0 ;;
+    *) ENABLE_AUTO_BACKUP=1 ;;
+  esac
+fi
+
+if [[ $ENABLE_AUTO_BACKUP -eq 1 ]]; then
+  echo "[*] Scheduling automatic nightly backups (systemd timer, 3am)..."
+  cat > /etc/systemd/system/nano-ai-backup.service <<EOF
 [Unit]
 Description=Nano AI restic backup (scheduled)
 
@@ -221,7 +249,7 @@ Type=oneshot
 ExecStart=${INSTALL_DIR}/run-backup.sh
 EOF
 
-cat > /etc/systemd/system/nano-ai-backup.timer <<EOF
+  cat > /etc/systemd/system/nano-ai-backup.timer <<EOF
 [Unit]
 Description=Nightly Nano AI backup
 
@@ -233,8 +261,12 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
-systemctl daemon-reload
-systemctl enable --now nano-ai-backup.timer
+  systemctl daemon-reload
+  systemctl enable --now nano-ai-backup.timer
+else
+  echo "[*] Skipping the automatic nightly timer - backups only run when the"
+  echo "    API's /backup endpoint is called."
+fi
 
 # --- Python API service ---
 echo "[*] Setting up Python control API..."
@@ -347,7 +379,15 @@ echo '  curl -H "Authorization: Bearer <token>" http://<tailscale-ip>:8843/statu
 echo '  curl -X POST -H "Authorization: Bearer <token>" http://<tailscale-ip>:8843/backup'
 echo '  curl -X POST -H "Authorization: Bearer <token>" http://<tailscale-ip>:8843/reboot'
 echo
-echo "A nightly backup is also scheduled automatically (systemd timer, 3am)."
-echo "Restore procedure: reflash from your offline golden image (or fresh"
-echo "L4T + these setup scripts), then run:"
-echo "    source ${RESTIC_ENV} && restic restore latest --target /"
+if [[ $ENABLE_AUTO_BACKUP -eq 1 ]]; then
+  echo "A nightly backup is also scheduled automatically (systemd timer, 3am)."
+else
+  echo "Automatic nightly backups are OFF - only the API's /backup endpoint"
+  echo "(or the systemd timer, if you enable it later) triggers a backup."
+fi
+echo
+echo "To restore (same machine or a fresh replacement after reflashing),"
+echo "run the interactive restore script instead of restoring by hand:"
+echo "    sudo ./restore_backup.sh"
+echo "It lists available snapshots, lets you pick one (or 'latest'), asks"
+echo "for the encryption password if this is a fresh machine, and restores."
