@@ -143,9 +143,10 @@ declare -A CORE_PATH=(
   [gui]="CoreSystemSetup/GuiRemoval/jetson_nano_headless.sh"
   [sshharden]="CoreSystemSetup/SSHHardener/ssh_harden.sh"
 )
-# Fixed run order for core items regardless of selection order. SSH
-# hardening runs last among these since it changes login behavior.
-CORE_ORDER=(swap jtop gui sshharden)
+# Fixed run order for core items regardless of selection order. GUI removal
+# runs first among these; SSH hardening runs last since it changes login
+# behavior.
+CORE_ORDER=(gui swap jtop sshharden)
 
 OPTIONAL_KEYS=(llama whisper piper backup)
 declare -A OPTIONAL_LABEL=(
