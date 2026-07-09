@@ -130,23 +130,26 @@ echo
 
 # --- Define available scripts ---
 # Keys, display labels, and paths (relative to repo root) for core items.
-CORE_KEYS=(swap jtop gui sshharden)
+CORE_KEYS=(gui python39 swap jtop sshharden)
 declare -A CORE_LABEL=(
+  [gui]="Boot to console instead of GUI (disables display manager; packages kept unless run manually with --purge-packages)"
+  [python39]="Install Python 3.9 (source build - deadsnakes PPA no longer covers Bionic, needed for wyoming-piper)"
   [swap]="Create 4GB swap file"
   [jtop]="Install jtop (jetson-stats)"
-  [gui]="Boot to console instead of GUI (disables display manager; packages kept unless run manually with --purge-packages)"
   [sshharden]="Harden SSH (key-only login - do this last of the core steps)"
 )
 declare -A CORE_PATH=(
+  [gui]="CoreSystemSetup/GuiRemoval/jetson_nano_headless.sh"
+  [python39]="CoreSystemSetup/python39_upgrade.sh"
   [swap]="CoreSystemSetup/SwapFileCreation/swap_setup.sh"
   [jtop]="CoreSystemSetup/JtopInstallation/jtop_install.sh"
-  [gui]="CoreSystemSetup/GuiRemoval/jetson_nano_headless.sh"
   [sshharden]="CoreSystemSetup/SSHHardener/ssh_harden.sh"
 )
 # Fixed run order for core items regardless of selection order. GUI removal
-# runs first among these; SSH hardening runs last since it changes login
-# behavior.
-CORE_ORDER=(gui swap jtop sshharden)
+# runs first among these; the Python 3.9 build runs right after it (so it's
+# ready before wyoming-piper needs it); SSH hardening runs last since it
+# changes login behavior.
+CORE_ORDER=(gui python39 swap jtop sshharden)
 
 OPTIONAL_KEYS=(llama whisper piper backup)
 declare -A OPTIONAL_LABEL=(
