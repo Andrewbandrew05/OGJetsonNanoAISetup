@@ -2,33 +2,50 @@
 #
 # jetson_nano_headless.sh
 #
-# Strips the GUI/desktop environment off an original Jetson Nano running
-# L4T Ubuntu, sets the system to boot to a text console permanently, and
-# removes packages/files that are no longer needed as a result.
+# Switches an original Jetson Nano running L4T Ubuntu to boot into a text
+# console instead of the desktop GUI.
+#
+# DEFAULT BEHAVIOR (fast, nothing removed):
+#  - Sets the default boot target to multi-user.target (text console)
+#  - Disables (and stops) the display manager service so it won't start
+#  - Does NOT uninstall anything - desktop packages stay on disk untouched
+#
+# OPTIONAL, SLOWER, DESTRUCTIVE MODE (--purge-packages):
+#  - Additionally purges the actual GUI/desktop packages to reclaim disk
+#    space. Guarded by a simulate-first safety check (see below) so it
+#    won't remove anything boot-critical - but it's still a much bigger,
+#    slower operation than the default, since it's actually uninstalling
+#    dozens of packages rather than just disabling a service.
 #
 # SAFE BY DESIGN:
-#  - Does NOT touch nvidia-l4t-* packages (GPU/CUDA/multimedia drivers).
-#    Removing those can break CUDA support or the ability to reflash.
-#  - Backs up the installed package list before purging anything.
-#  - Requires an explicit "yes" confirmation before making changes.
-#  - Meant to be run over SSH, not from the desktop session itself.
-#  - Before running the purge AND before running autoremove, simulates the
-#    command first and checks the proposed removal list against a denylist
-#    of boot-critical packages (kernel, initramfs-tools, nvidia-l4t-*,
+#  - Default mode changes nothing on disk - fully reversible by just
+#    re-enabling the display manager and setting the default target back.
+#  - --purge-packages does NOT touch nvidia-l4t-* packages (GPU/CUDA/
+#    multimedia drivers). Removing those can break CUDA support or the
+#    ability to reflash.
+#  - --purge-packages simulates the purge AND the autoremove step first,
+#    and checks the proposed removal list against a denylist of
+#    boot-critical packages (kernel, initramfs-tools, nvidia-l4t-*,
 #    systemd, dbus, network-manager, openssh, etc). If anything on that
 #    list would be removed, that step is skipped entirely rather than
 #    trusting apt's dependency solver blindly. (An earlier version of this
 #    script ran `apt-get autoremove --purge` unconditionally, with no such
 #    check - on real hardware this cascaded into removing far more than
 #    the targeted GUI packages and left the board unable to boot.)
+#  - Backs up the installed package list before making changes.
+#  - Requires an explicit "yes" confirmation before making changes.
+#  - Meant to be run over SSH, not from the desktop session itself.
 #
 # Usage:
-#   chmod +x jetson_nano_headless.sh
-#   sudo ./jetson_nano_headless.sh
-#   sudo ./jetson_nano_headless.sh --yes   # skip the confirmation prompt
+#   sudo ./jetson_nano_headless.sh                     # disable-only (default, fast)
+#   sudo ./jetson_nano_headless.sh --purge-packages     # also purge GUI packages (slower)
+#   sudo ./jetson_nano_headless.sh --yes                # skip the confirmation prompt
+#   sudo ./jetson_nano_headless.sh --purge-packages --yes
 #
 # Non-interactive: set NANO_SETUP_AUTO_YES_OS=1 (what setup.sh's
 # --bypassAllChecks does) to skip the confirmation the same way --yes does.
+# --purge-packages still has to be passed explicitly either way - the
+# destructive mode is never implied by a bypass flag alone.
 #
 set -euo pipefail
 
@@ -38,9 +55,11 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 AUTO_YES=0
+PURGE_PACKAGES=0
 for arg in "$@"; do
   case "$arg" in
     -y|--yes) AUTO_YES=1 ;;
+    --purge-packages) PURGE_PACKAGES=1 ;;
   esac
 done
 if [[ "${NANO_SETUP_AUTO_YES_OS:-0}" == "1" ]]; then
@@ -51,16 +70,32 @@ LOGFILE="/var/log/jetson_headless_$(date +%Y%m%d_%H%M%S).log"
 BACKUP_LIST="/root/pkg_list_before_headless_$(date +%Y%m%d_%H%M%S).txt"
 
 echo "=== Jetson Nano Headless Converter ==="
-echo "This will:"
-echo "  1. Set the boot target to text console (multi-user.target) permanently"
-echo "  2. Purge desktop/GUI packages (gdm3, lightdm, gnome/unity, xorg, etc.)"
-echo "  3. Autoremove now-unused dependencies"
-echo "  4. Clean apt caches and orphaned config/log files from those packages"
-echo
-echo "It will NOT remove nvidia-l4t-* packages (CUDA/GPU/driver stack)."
+if [[ $PURGE_PACKAGES -eq 1 ]]; then
+  echo "This will:"
+  echo "  1. Set the boot target to text console (multi-user.target) permanently"
+  echo "  2. Disable the display manager service so it won't start at boot"
+  echo "  3. Purge desktop/GUI packages (gdm3, lightdm, gnome/unity, xorg, etc.)"
+  echo "  4. Autoremove now-unused dependencies"
+  echo "  5. Clean apt caches and orphaned config/log files from those packages"
+  echo
+  echo "It will NOT remove nvidia-l4t-* packages (CUDA/GPU/driver stack)."
+  echo "Steps 3 and 4 simulate first and refuse to run if anything"
+  echo "boot-critical (kernel, nvidia-l4t-*, initramfs-tools, etc.) would be"
+  echo "removed - see the script header for details."
+else
+  echo "This will:"
+  echo "  1. Set the boot target to text console (multi-user.target) permanently"
+  echo "  2. Disable the display manager service so it won't start at boot"
+  echo
+  echo "Nothing gets uninstalled - your desktop packages stay on disk exactly"
+  echo "as they are. Re-run with --purge-packages if you also want to reclaim"
+  echo "the disk space they use (slower, and only after a simulate-first"
+  echo "safety check that refuses to remove anything boot-critical)."
+fi
 echo "A full package list backup will be saved to: $BACKUP_LIST"
 echo "A log of everything done will be saved to: $LOGFILE"
 echo
+
 if [[ $AUTO_YES -eq 1 ]]; then
   echo "Continue? Type 'yes' to proceed: yes (auto-accepted)"
 else
@@ -78,6 +113,33 @@ dpkg -l > "$BACKUP_LIST"
 
 echo "[*] Setting default boot target to multi-user (text console)..."
 systemctl set-default multi-user.target
+
+echo "[*] Disabling display manager service(s) so the GUI won't start at boot..."
+DISPLAY_MANAGERS=(gdm3 gdm lightdm sddm xdm slim lxdm)
+for dm in "${DISPLAY_MANAGERS[@]}"; do
+  if systemctl list-unit-files "${dm}.service" --no-legend 2>/dev/null | grep -q .; then
+    systemctl disable --now "${dm}.service" 2>/dev/null || true
+    echo "    Disabled ${dm}.service"
+  fi
+done
+systemctl disable display-manager.service 2>/dev/null || true
+
+if [[ $PURGE_PACKAGES -eq 0 ]]; then
+  echo
+  echo "=== Done ==="
+  echo "Package list backup: $BACKUP_LIST"
+  echo "Full log: $LOGFILE"
+  echo
+  echo "Nothing was uninstalled - just disabled. Reboot to boot into"
+  echo "text-console mode (or it already took effect immediately for this"
+  echo "session too):"
+  echo "  sudo reboot"
+  echo
+  echo "Want the disk space back too? Re-run with --purge-packages."
+  exit 0
+fi
+
+# --- Everything below only runs with --purge-packages ---
 
 # --- Safety net for the purge/autoremove steps below ---
 # Patterns for packages that must never be removed, no matter what apt's

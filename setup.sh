@@ -134,7 +134,7 @@ CORE_KEYS=(swap jtop gui sshharden)
 declare -A CORE_LABEL=(
   [swap]="Create 4GB swap file"
   [jtop]="Install jtop (jetson-stats)"
-  [gui]="Strip out GUI / desktop (permanent, boots to console)"
+  [gui]="Boot to console instead of GUI (disables display manager; packages kept unless run manually with --purge-packages)"
   [sshharden]="Harden SSH (key-only login - do this last of the core steps)"
 )
 declare -A CORE_PATH=(
