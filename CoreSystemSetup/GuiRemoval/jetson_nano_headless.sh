@@ -303,9 +303,21 @@ else
   if simulate_and_guard "GUI package removal" apt-get remove -s "${INSTALLED_MATCHES[@]}"; then
     echo "[*] Removing..."
     apt-get remove -y "${INSTALLED_MATCHES[@]}" || {
+      # Removing packages one at a time can trigger a completely different
+      # dependency cascade than removing them all together in one
+      # transaction (apt resolves dependencies fresh against the current,
+      # now-partially-modified system state on each call) - so this
+      # fallback gets its own simulate-first guard per package rather than
+      # inheriting the all-at-once check above. On real hardware, this gap
+      # let cuda-toolkit-10-2/nvidia-l4t-cuda get removed via this exact
+      # fallback path even though the bulk simulate came back clean.
       echo "[!] Some packages failed to remove individually; retrying one-by-one..."
       for pkg in "${INSTALLED_MATCHES[@]}"; do
-        apt-get remove -y "$pkg" || echo "    [!] Failed to remove $pkg, skipping."
+        if simulate_and_guard "GUI package removal (${pkg})" apt-get remove -s "$pkg"; then
+          apt-get remove -y "$pkg" || echo "    [!] Failed to remove $pkg, skipping."
+        else
+          echo "    [!] Skipped removing $pkg for safety - see SAFETY ABORT above."
+        fi
       done
     }
   else

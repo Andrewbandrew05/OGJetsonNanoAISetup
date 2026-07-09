@@ -107,6 +107,12 @@ FLAG_MODE=$(( INSTALL_ALL || INSTALL_MODELS || INSTALL_BACKUP ))
 # ---purgeGuiPackages has to be passed explicitly to turn this on.
 export NANO_GUI_PURGE_PACKAGES=$PURGE_GUI_PACKAGES
 
+# How many times to attempt each script before giving up on it (1 = no
+# retry). Overridable via env var for anyone who wants tighter/looser
+# tolerance than the default.
+NANO_SETUP_SCRIPT_ATTEMPTS="${NANO_SETUP_SCRIPT_ATTEMPTS:-2}"
+NANO_SETUP_RETRY_DELAY="${NANO_SETUP_RETRY_DELAY:-15}"
+
 # NANO_SETUP_AUTO_YES     - auto-accept installer-level confirmations
 # NANO_SETUP_AUTO_YES_OS  - auto-accept OS-level (destructive/system) confirmations
 NANO_SETUP_AUTO_YES=0
@@ -327,11 +333,30 @@ for k in "${RUN_ORDER[@]}"; do
   fi
 
   chmod +x "$full_path" 2>/dev/null || true
-  if bash "$full_path"; then
-    RESULT["$label"]="OK"
-  else
-    echo "[!] $label exited with an error. Continuing with remaining steps." >&2
-    RESULT["$label"]="FAILED"
+
+  # Every script here is idempotent (checks what's already done before
+  # redoing it), so a failure is cheap to just retry - and several of
+  # tonight's "failures" turned out to be nothing but a transient network
+  # blip during a curl/git/apt call, fixed by a plain rerun with zero
+  # changes. Retry a bounded number of times before giving up, rather than
+  # moving on after the first hiccup during an unattended run.
+  attempt=1
+  status="FAILED"
+  while [[ $attempt -le $NANO_SETUP_SCRIPT_ATTEMPTS ]]; do
+    if [[ $attempt -gt 1 ]]; then
+      echo "[*] Retry ${attempt}/${NANO_SETUP_SCRIPT_ATTEMPTS} for: $label (waiting ${NANO_SETUP_RETRY_DELAY}s first)"
+      sleep "$NANO_SETUP_RETRY_DELAY"
+    fi
+    if bash "$full_path"; then
+      status="OK"
+      break
+    fi
+    ((attempt++))
+  done
+
+  RESULT["$label"]="$status"
+  if [[ "$status" == "FAILED" ]]; then
+    echo "[!] $label failed after ${NANO_SETUP_SCRIPT_ATTEMPTS} attempt(s). Continuing with remaining steps." >&2
   fi
 done
 
