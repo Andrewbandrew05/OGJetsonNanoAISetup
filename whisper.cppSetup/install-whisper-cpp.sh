@@ -19,15 +19,19 @@
 # README.md). Override with WHISPER_SERVER_PORT=9000, or via setup.sh:
 # --whisperPort=9000
 #
-# Model: defaults to small.en (a meaningful accuracy upgrade over the old
-# base.en default, confirmed to still run fine under CUDA on the original
-# Nano). If WHISPER_MODEL is set (or via setup.sh: --whisperModel=...), that
-# model is used directly with no prompt - e.g. WHISPER_MODEL=base.en. If
-# it's unset AND an auto-accept flag is active (--bypassAllChecks/
-# --bypassInstallerChecks), small.en is used automatically rather than
+# Model: defaults to tiny.en. small.en technically loads and runs fine
+# under CUDA on its own, but real-world testing with the full stack
+# running together (llama.cpp + wyoming-piper + function-calling overhead)
+# showed it's too slow in practice - tiny.en is the one that actually
+# feels responsive end-to-end. small.en is still available for anyone who
+# wants to trade speed for accuracy and has the headroom for it. If
+# WHISPER_MODEL is set (or via setup.sh: --whisperModel=...), that model is
+# used directly with no prompt - e.g. WHISPER_MODEL=small.en. If it's unset
+# AND an auto-accept flag is active (--bypassAllChecks/
+# --bypassInstallerChecks), tiny.en is used automatically rather than
 # hanging on a prompt during an unattended run. Otherwise (plain
 # interactive run, nothing set), this asks which model to use and explains
-# the tradeoffs - press Enter for the small.en default, or pick another.
+# the tradeoffs - press Enter for the tiny.en default, or pick another.
 #
 # If whisper-cpp-server.service already exists, this asks before
 # overwriting it (rebuilding takes several minutes on Jetson Nano). Under
@@ -71,43 +75,48 @@ elif [[ "${NANO_SETUP_AUTO_YES:-0}" == "1" || "${NANO_SETUP_AUTO_YES_OS:-0}" == 
   # Auto-accept flags are active and no explicit model was requested - use
   # the recommended default rather than hanging on a prompt during an
   # unattended run.
-  MODEL="small.en"
-  echo "[*] Auto-accept active - defaulting to model: small.en"
+  MODEL="tiny.en"
+  echo "[*] Auto-accept active - defaulting to model: tiny.en"
   echo "    (set WHISPER_MODEL=tiny.en|base.en|small.en|medium.en to pick a"
   echo "    different one non-interactively next time)"
 else
   echo "Which whisper.cpp model would you like to use?"
   echo
-  echo "  1) tiny.en   - Fastest, least accurate (~39M params). Good if"
-  echo "                 snappy responses matter more than getting"
-  echo "                 uncommon words/names right."
-  echo "  2) base.en   - The original default (~74M params). Runs roughly"
-  echo "                 real-time on this hardware, but struggles with"
-  echo "                 less-common vocabulary and proper nouns."
-  echo "  3) small.en  - Recommended. ~3x base.en's size (~244M params)."
-  echo "                 Meaningfully better accuracy on uncommon words"
-  echo "                 and proper nouns, for a real but acceptable"
-  echo "                 speed cost. Confirmed working well with CUDA on"
-  echo "                 the original Nano."
+  echo "  1) tiny.en   - Recommended (~39M params). The one that actually"
+  echo "                 feels responsive once llama.cpp, wyoming-piper,"
+  echo "                 and function-calling overhead are all running"
+  echo "                 alongside it - real-world testing found the"
+  echo "                 bigger options below too slow in practice for"
+  echo "                 the full stack, even though they load and run"
+  echo "                 fine on their own. Occasionally misses uncommon"
+  echo "                 words/names."
+  echo "  2) base.en   - The old default (~74M params). Runs roughly"
+  echo "                 real-time standalone, but noticeably adds to"
+  echo "                 total response time once the rest of the stack"
+  echo "                 is running too."
+  echo "  3) small.en  - ~3x base.en's size (~244M params). Meaningfully"
+  echo "                 better accuracy on uncommon words/names, but"
+  echo "                 confirmed too slow in practice alongside"
+  echo "                 llama.cpp + wyoming-piper on this hardware."
+  echo "                 Only pick this if accuracy matters more to you"
+  echo "                 than response speed."
   echo "  4) medium.en - Best accuracy of these options, but ~3x"
-  echo "                 small.en's size again (~769M params). Likely"
-  echo "                 noticeably slower, and may not comfortably fit"
-  echo "                 in memory alongside llama.cpp/wyoming-piper"
-  echo "                 running at the same time. Only worth trying if"
-  echo "                 small.en's accuracy genuinely isn't enough and"
-  echo "                 you've confirmed you have the memory/speed"
-  echo "                 headroom for it (check 'free -h' with everything"
-  echo "                 else already running)."
+  echo "                 small.en's size again (~769M params). Likely to"
+  echo "                 feel very slow, and may not comfortably fit in"
+  echo "                 memory alongside everything else running. Only"
+  echo "                 worth trying if you've confirmed you have the"
+  echo "                 memory/speed headroom for it (check 'free -h'"
+  echo "                 with everything else already running)."
   echo
-  read -rp "Press Enter for the recommended default (small.en), or type a number [1-4]: " MODEL_CHOICE
+  read -rp "Press Enter for the recommended default (tiny.en), or type a number [1-4]: " MODEL_CHOICE
   case "$MODEL_CHOICE" in
-    1) MODEL="tiny.en" ;;
     2) MODEL="base.en" ;;
+    3) MODEL="small.en" ;;
     4) MODEL="medium.en" ;;
-    ""|3) MODEL="small.en" ;;
+    ""|1) MODEL="tiny.en" ;;
     *)
-      echo "[!] Unrecognized choice '$MODEL_CHOICE' - defaulting to small.en."
-      MODEL="small.en"
+      echo "[!] Unrecognized choice '$MODEL_CHOICE' - defaulting to tiny.en."
+      MODEL="tiny.en"
       ;;
   esac
   echo "[*] Using model: ${MODEL}"

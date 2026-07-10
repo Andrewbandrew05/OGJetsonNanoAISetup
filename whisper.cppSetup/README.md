@@ -36,22 +36,20 @@ systemd service (`whisper-cpp-server`) serving an HTTP transcription API on
 `127.0.0.1:8080` (override with `WHISPER_SERVER_PORT=9000
 ./install-whisper-cpp.sh`, or via `setup.sh`: `--whisperPort=9000`).
 
-**Model:** defaults to `small.en` - a real, worthwhile accuracy upgrade
-over the original `base.en` default (roughly 3x the parameters), noticeably
-better at uncommon words/names/proper nouns, confirmed to still run fine
-under CUDA on the original Nano. Run the script with no args interactively
-and it'll ask which model to use with a tradeoff description for each
-(`tiny.en` / `base.en` / `small.en` / `medium.en`) - press Enter for the
-`small.en` default, or pick another. Set `WHISPER_MODEL=base.en` (or via
-`setup.sh`: `--whisperModel=base.en`) to skip that prompt and pick a
-specific model non-interactively; under `setup.sh`'s
-`--bypassAllChecks`/`--bypassInstallerChecks` with no `WHISPER_MODEL` set,
-it defaults to `small.en` automatically rather than hanging on a prompt.
-`medium.en` is available but likely to feel noticeably slower and may not
-comfortably fit in memory alongside llama.cpp/wyoming-piper running at the
-same time - only reach for it if `small.en`'s accuracy genuinely isn't
-enough and you've confirmed the headroom (`free -h` with everything else
-already running).
+**Model:** defaults to `tiny.en`. `small.en` and even `medium.en` load and
+run fine under CUDA on their own, but real-world testing with the full
+voice-assistant stack running together (llama.cpp + wyoming-piper +
+function-calling overhead, all sharing this Nano's 4GB) found them too
+slow in practice - `tiny.en` is the one that actually stays responsive
+end-to-end. Run the script with no args interactively and it'll ask which
+model to use with a tradeoff description for each (`tiny.en` / `base.en` /
+`small.en` / `medium.en`) - press Enter for the `tiny.en` default, or pick
+another if accuracy matters more to you than response speed. Set
+`WHISPER_MODEL=small.en` (or via `setup.sh`: `--whisperModel=small.en`) to
+skip that prompt and pick a specific model non-interactively; under
+`setup.sh`'s `--bypassAllChecks`/`--bypassInstallerChecks` with no
+`WHISPER_MODEL` set, it defaults to `tiny.en` automatically rather than
+hanging on a prompt.
 
 **This is a plain REST endpoint, not the Wyoming protocol.** Home
 Assistant's Wyoming integration expects a Wyoming-protocol TCP service, the
@@ -135,14 +133,18 @@ than relying on this script to fetch it itself.
 ### 5. Original Nano GPU is genuinely weak — set expectations accordingly
 
 The original Nano's Maxwell GPU (128 CUDA cores) is a big step down from
-Orin-series hardware. With CUDA working correctly, `base.en` transcribes
-roughly real-time or a bit better with default (beam search) decoding, and
-noticeably faster with greedy decoding (`--best-of 1`, which this script
-always uses). `small.en` (this script's default - see above) is
-confirmed to also run acceptably under CUDA on this hardware, at a real
-but tolerable speed cost over `base.en`. `medium.en` is a much bigger step
-up again and is unlikely to feel responsive for interactive use - see the
-model-selection notes above before reaching for it.
+Orin-series hardware. With CUDA working correctly, `tiny.en` (this
+script's default - see above) transcribes quickly, especially with greedy
+decoding (`--best-of 1`, which this script always uses). `base.en`,
+`small.en`, and `medium.en` all load and run correctly under CUDA on this
+hardware too - none of them are broken - but real-world testing with the
+full voice-assistant stack running together (llama.cpp + wyoming-piper +
+function-calling overhead, all sharing this Nano's 4GB) found each step up
+in size added noticeably to end-to-end response time, to the point that
+only `tiny.en` felt genuinely responsive for interactive voice commands.
+If accuracy matters more to you than speed and you're willing to accept
+slower responses, the bigger models are there - see the model-selection
+notes above.
 
 ## Verifying the CUDA build actually works (not silently falling back to CPU)
 

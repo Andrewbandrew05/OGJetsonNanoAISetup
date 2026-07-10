@@ -105,10 +105,13 @@
 #   --backupApiPort=9002
 #
 # whisper.cpp model (only takes effect if whisper.cpp is actually being
-# installed this run): defaults to small.en, or asks interactively (with
+# installed this run): defaults to tiny.en (the one that stays responsive
+# once llama.cpp/wyoming-piper/function-calling overhead are all running
+# alongside it - bigger models load and run fine standalone but were too
+# slow in practice for the full stack), or asks interactively (with
 # tradeoff descriptions) if run with no args and no bypass flag. Set this
 # to skip that prompt non-interactively:
-#   --whisperModel=base.en   (tiny.en / base.en / small.en / medium.en)
+#   --whisperModel=small.en   (tiny.en / base.en / small.en / medium.en)
 #
 # Usage (from a local clone):
 #   chmod +x setup.sh
