@@ -1,7 +1,9 @@
 # OGJetsonNanoAISetup
 Guide to setting up an original Jetson Nano to run llama.cpp, piper, and whisper.cpp to act as an ai coprocessor. Not sure how many people will find this useful but I know I would've liked to have found this when I was trying to set it up.
 
-NOTE THIS IS STILL IN DEVELOPMENT I AM NOT AT FAULT IF IT BRICKS YOUR OS
+NOTE THIS IS STILL IN DEVELOPMENT I AM NOT AT FAULT IF IT BRICKS YOUR OS 
+
+Also, if you try running it and tailscale locks up simply hit ctrl + c to trigger the retry. It usually works on the second attempt.
 
 This guide is built out as a series of steps augmented by automated installation scripts you can run if you so wish. It worked for me on a INSERT NAME OF EXACT NANO DEVICE HERE but I can't guarantee it'll work on yours. 
 
