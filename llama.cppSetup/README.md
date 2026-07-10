@@ -1,9 +1,21 @@
 # LLama.cpp Setup
 Pulls down a precompiled, CUDA-enabled llama.cpp build from
 https://github.com/kreier/llama.cpp-jetson.nano, downloads the
-`gemma-3-1b-it-GGUF` model on first start, and installs+starts a systemd
-service (`llama-cpp-server`) serving the HTTP API/web UI on port **8081**
-(deliberately not 8080, since whisper.cpp's server binds that port).
+`Qwen2.5-1.5B-Instruct-GGUF` model on first start, and installs+starts a
+systemd service (`llama-cpp-server`) serving the HTTP API/web UI on port
+**8081** (deliberately not 8080, since whisper.cpp's server binds that
+port).
+
+Qwen2.5-1.5B was chosen over a smaller ~1B model specifically for
+meaningfully better instruction-following and tool-calling reliability
+(e.g. correctly deciding whether/how to call a Home Assistant function),
+while still comfortably fitting this hardware's memory budget (~1GB) and
+running at a similar speed. Override with
+`LLAMA_MODEL_HF=some-org/some-model-GGUF ./install-llama-cpp-nano-service.sh`
+if you want to try a different model - bigger models are meaningfully
+slower on this hardware (memory bandwidth, not just compute, is the real
+bottleneck), so test any swap directly against `llama-cpp-server`'s own
+`/v1/chat/completions` endpoint before assuming it's an improvement.
 
 First startup takes a few minutes while the model downloads and converts -
 watch progress with `sudo journalctl -u llama-cpp-server.service -f`.

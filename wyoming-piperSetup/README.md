@@ -11,6 +11,21 @@ provider. It uses the older `rhasspy/piper` C++ binary release rather than
 the actively-maintained `piper-tts` pip package, since that one requires
 glibc 2.28+ and the Nano's Ubuntu 18.04 ships glibc 2.27.
 
+**The prebuilt piper release itself needs one library rebuilt.** Its
+bundled `libespeak-ng.so.1` needs glibc 2.29 - one version newer than what
+Ubuntu 18.04 ships - so loading it as-is fails with
+`version 'GLIBC_2.29' not found`. The install script automatically rebuilds
+just that one library from source (pinned to the exact commit
+`piper-phonemize` itself builds against - see its `CMakeLists.txt`) against
+this system's actual glibc, and swaps it in over the bundled one.
+`onnxruntime` and `piper_phonemize` both resolve cleanly as shipped, so
+this stays quick and never touches the much heavier `onnxruntime` build.
+Do **not** try to fix this by upgrading the system's own glibc instead -
+Ubuntu 18.04's entire package repository is built and tested against glibc
+2.27; forcing a newer one in place risks breaking far more than Piper (up
+to and including an unbootable system), for no benefit over rebuilding
+this one small library.
+
 **Requires Python 3.9** on PATH - Ubuntu 18.04 doesn't ship it, and the
 deadsnakes PPA this script used to fall back to no longer publishes builds
 for Bionic. Run `CoreSystemSetup/Python39Upgrade/python39_upgrade.sh`

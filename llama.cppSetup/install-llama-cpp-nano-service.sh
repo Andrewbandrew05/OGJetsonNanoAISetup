@@ -12,6 +12,11 @@
 # Override with: LLAMA_SERVICE_PORT=9000 ./install-llama-cpp-nano-service.sh
 # Via setup.sh: --llamaPort=9000
 #
+# Default model: Qwen2.5-1.5B-Instruct - noticeably more reliable at
+# instruction-following and tool-calling than the original 1B Gemma default,
+# while still fitting comfortably in ~1GB and running at a similar speed on
+# this hardware. Override with: LLAMA_MODEL_HF=some-org/some-model-GGUF
+#
 # If llama-cpp-server.service already exists, this asks before overwriting
 # it (rebuilding means redownloading the CUDA binaries and re-fetching the
 # model). Under setup.sh's --bypassAllChecks/--bypassInstallerChecks, it
@@ -45,7 +50,7 @@ SERVICE_USER="${SUDO_USER:-$(whoami)}"
 # Deliberately NOT 8080 by default, to avoid clashing with the whisper.cpp
 # server already bound to 127.0.0.1:8080. Override with LLAMA_SERVICE_PORT.
 SERVICE_PORT="${LLAMA_SERVICE_PORT:-8081}"
-MODEL_HF="ggml-org/gemma-3-1b-it-GGUF"
+MODEL_HF="${LLAMA_MODEL_HF:-Qwen/Qwen2.5-1.5B-Instruct-GGUF}"
 
 BIND_DIR="/etc/nano-ai-bind"
 MODE_FILE="${BIND_DIR}/llama.mode"
@@ -174,6 +179,7 @@ sudo systemctl start llama-cpp-server.service
 echo ""
 echo "=== Done ==="
 echo "Service installed as: llama-cpp-server.service"
+echo "Model: ${MODEL_HF}"
 if [[ "$NEW_MODE" == "tailscale" ]]; then
   echo "Bind mode: Tailscale-only (falls back to 127.0.0.1 if tailscale0 isn't up)"
 else

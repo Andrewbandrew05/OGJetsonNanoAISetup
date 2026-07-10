@@ -16,8 +16,14 @@
 # requires glibc 2.28+. Jetson Nano's Ubuntu 18.04 (Bionic) ships glibc
 # 2.27 -- one version short. The original rhasspy/piper C++ binary release
 # (archived Oct 2025, but still functional and still the backend
-# wyoming-piper expects) was built years ago against an older glibc
-# baseline and works fine here. See README.md for details.
+# wyoming-piper expects) works fine here, EXCEPT for one bundled library:
+# its libespeak-ng.so.1 itself needs glibc 2.29, so loading it as-is fails
+# with "version GLIBC_2.29 not found". This script rebuilds just that one
+# library from source (pinned to the exact commit piper-phonemize's own
+# build pulls in) against this system's actual glibc, and swaps it in -
+# onnxruntime and piper_phonemize both resolve fine as-is, so this stays
+# quick and never touches the much heavier onnxruntime dependency. See
+# README.md for details.
 #
 # Why wyoming-piper is pinned to v1.6.3, not main: commit a9bedf7 ("Use
 # piper1-gpl") removed the --piper <path> flag entirely and switched
@@ -101,7 +107,7 @@ if [[ -f /etc/systemd/system/wyoming-piper.service ]]; then
   esac
 fi
 
-echo "==> [1/6] Installing Python 3.9 (required by wyoming-piper; Jetson ships 3.6/3.8 only)"
+echo "==> [1/7] Installing Python 3.9 (required by wyoming-piper; Jetson ships 3.6/3.8 only)"
 if ! command -v python3.9 >/dev/null 2>&1; then
   sudo apt update
   sudo apt install -y software-properties-common
@@ -111,20 +117,73 @@ if ! command -v python3.9 >/dev/null 2>&1; then
 fi
 python3.9 --version
 
-echo "==> [2/6] Setting up ${PIPER_DIR}"
+echo "==> [2/7] Setting up ${PIPER_DIR}"
 sudo mkdir -p "$PIPER_DIR"
 sudo chown "$SERVICE_USER":"$SERVICE_USER" "$PIPER_DIR"
 
-echo "==> [3/6] Downloading Piper prebuilt binary (CPU, aarch64)"
+echo "==> [3/7] Downloading Piper prebuilt binary (CPU, aarch64)"
 cd "$PIPER_DIR"
 if [ ! -x "$PIPER_DIR/piper/piper" ]; then
   wget -O piper.tar.gz https://github.com/rhasspy/piper/releases/latest/download/piper_linux_aarch64.tar.gz
   tar -xzf piper.tar.gz
   rm -f piper.tar.gz
+
+  echo "==> [4/7] Rebuilding libespeak-ng against this system's own glibc"
+  echo "    (the prebuilt piper release bundles a libespeak-ng.so.1 that"
+  echo "     needs glibc 2.29 - newer than Ubuntu 18.04's 2.27 - so loading"
+  echo "     it as-is fails with 'version GLIBC_2.29 not found'. Only"
+  echo "     espeak-ng itself needs rebuilding - onnxruntime and"
+  echo "     piper_phonemize both resolve fine as-is - so this stays quick"
+  echo "     and doesn't touch the much heavier onnxruntime dependency.)"
+  sudo apt-get install -y build-essential unzip
+  # Pinned to the exact commit piper-phonemize's own build pulls in
+  # (see its CMakeLists.txt ExternalProject_Add for espeak_ng_external),
+  # not upstream espeak-ng, and not just "whatever's newest" - a
+  # different commit could behave subtly differently even if it happens
+  # to link cleanly.
+  ESPEAK_NG_COMMIT="0f65aa301e0d6bae5e172cc74197d32a6182200f"
+  # System cmake (3.10.2 on stock Ubuntu 18.04) fails on this exact
+  # commit's project()/VERSION syntax with "must use LANGUAGES before
+  # language names" - get a modern one via pip rather than fighting
+  # apt/PPAs for a newer cmake package.
+  python3.9 -m pip install --quiet --user cmake
+  BUILD_CMAKE="$(python3.9 -c 'import site; print(site.USER_BASE)')/bin/cmake"
+  ESPEAK_BUILD_DIR=$(mktemp -d)
+  (
+    cd "$ESPEAK_BUILD_DIR"
+    wget -q -O espeak-ng.zip "https://github.com/rhasspy/espeak-ng/archive/${ESPEAK_NG_COMMIT}.zip"
+    unzip -q espeak-ng.zip
+    cd "espeak-ng-${ESPEAK_NG_COMMIT}"
+    mkdir build && cd build
+    "$BUILD_CMAKE" .. \
+      -DCMAKE_INSTALL_PREFIX="${ESPEAK_BUILD_DIR}/install" \
+      -DUSE_ASYNC=OFF -DBUILD_SHARED_LIBS=ON -DUSE_MBROLA=OFF \
+      -DUSE_LIBSONIC=OFF -DUSE_LIBPCAUDIO=OFF -DUSE_KLATT=OFF \
+      -DUSE_SPEECHPLAYER=OFF -DEXTRA_cmn=ON \
+      -DCMAKE_C_FLAGS="-D_FILE_OFFSET_BITS=64"
+    make -j"$(nproc)"
+    make install
+  )
+  BUILT_LIB=$(find "${ESPEAK_BUILD_DIR}/install/lib" -name 'libespeak-ng.so.*' -type f | head -1)
+  if [[ -z "$BUILT_LIB" ]]; then
+    echo "ERROR: rebuilding libespeak-ng failed - see build output above." >&2
+    exit 1
+  fi
+  TARGET_LIB=$(readlink -f "$PIPER_DIR/piper/libespeak-ng.so.1")
+  cp "$TARGET_LIB" "${TARGET_LIB}.prebuilt.bak"
+  cp "$BUILT_LIB" "$TARGET_LIB"
+  if ldd "$PIPER_DIR/piper/piper" | grep -qi "not found"; then
+    echo "ERROR: piper still has unresolved library dependencies after the" >&2
+    echo "rebuild - check 'ldd ${PIPER_DIR}/piper/piper'. The original" >&2
+    echo "prebuilt library was saved at ${TARGET_LIB}.prebuilt.bak." >&2
+    exit 1
+  fi
+  echo "[*] libespeak-ng rebuilt and swapped in cleanly - no missing glibc symbols."
+  rm -rf "$ESPEAK_BUILD_DIR"
 fi
 "$PIPER_DIR/piper/piper" --version || echo "  (no --version output -- binary may still be fine, will confirm via wyoming-piper next)"
 
-echo "==> [4/6] Cloning wyoming-piper (pinned to v1.6.3) and setting up its venv with Python 3.9"
+echo "==> [5/7] Cloning wyoming-piper (pinned to v1.6.3) and setting up its venv with Python 3.9"
 cd "$PIPER_DIR"
 if [ ! -d "$PIPER_DIR/wyoming-piper/.git" ]; then
   git clone https://github.com/rhasspy/wyoming-piper.git
@@ -139,7 +198,7 @@ git checkout v1.6.3
 rm -rf .venv
 python3.9 script/setup
 
-echo "==> [5/6] Checking wyoming-piper's actual CLI flags"
+echo "==> [6/7] Checking wyoming-piper's actual CLI flags"
 echo "    (confirming exact flag names before wiring up the service --"
 echo "     if this differs from what's in the systemd unit below, adjust ExecStart accordingly)"
 .venv/bin/python3 -m wyoming_piper --help || .venv/bin/wyoming-piper --help || true
@@ -155,7 +214,7 @@ mkdir -p "$PIPER_DIR/data"
 # start. Re-chown everything now to match who actually needs to write here.
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$PIPER_DIR"
 
-echo "==> [6/6] Installing bind-mode wrapper + systemd service"
+echo "==> [7/7] Installing bind-mode wrapper + systemd service"
 sudo mkdir -p "$BIND_DIR"
 echo "$NEW_MODE" | sudo tee "$MODE_FILE" > /dev/null
 

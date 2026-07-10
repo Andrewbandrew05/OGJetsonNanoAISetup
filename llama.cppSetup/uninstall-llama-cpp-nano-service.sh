@@ -6,10 +6,11 @@
 # llama-cpp-server systemd service and the binaries/libraries it installed
 # to /usr/local/bin and /usr/local/lib.
 #
-# The downloaded model (gemma-3-1b-it-GGUF, several GB) lives in
-# ~/.cache/llama.cpp for whichever user the service ran as - removing that
-# is a separate, explicit confirmation since it's a bigger and more
-# clearly-irreversible deletion than the service itself.
+# The downloaded model (whichever one LLAMA_MODEL_HF pointed at, several
+# hundred MB to a few GB) lives in ~/.cache/llama.cpp for whichever user
+# the service ran as - removing that is a separate, explicit confirmation
+# since it's a bigger and more clearly-irreversible deletion than the
+# service itself.
 #
 # Usage:
 #   sudo ./uninstall-llama-cpp-nano-service.sh
