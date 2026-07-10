@@ -104,6 +104,12 @@
 #   --piperPort=10201
 #   --backupApiPort=9002
 #
+# whisper.cpp model (only takes effect if whisper.cpp is actually being
+# installed this run): defaults to small.en, or asks interactively (with
+# tradeoff descriptions) if run with no args and no bypass flag. Set this
+# to skip that prompt non-interactively:
+#   --whisperModel=base.en   (tiny.en / base.en / small.en / medium.en)
+#
 # Usage (from a local clone):
 #   chmod +x setup.sh
 #   sudo ./setup.sh                        # interactive: numbers or flags, your choice
@@ -151,6 +157,7 @@ TAILSCALE_ALL=0
 REBIND_MODE=""
 LLAMA_PORT=""
 WHISPER_PORT=""
+WHISPER_MODEL_FLAG=""
 WYOMING_WHISPER_PORT_FLAG=""
 PIPER_PORT=""
 BACKUP_API_PORT=""
@@ -182,6 +189,7 @@ parse_flag_token() {
       ;;
     --llamaPort=*) LLAMA_PORT="${arg#*=}" ;;
     --whisperPort=*) WHISPER_PORT="${arg#*=}" ;;
+    --whisperModel=*) WHISPER_MODEL_FLAG="${arg#*=}" ;;
     --wyomingWhisperPort=*) WYOMING_WHISPER_PORT_FLAG="${arg#*=}" ;;
     --piperPort=*) PIPER_PORT="${arg#*=}" ;;
     --backupApiPort=*) BACKUP_API_PORT="${arg#*=}" ;;
@@ -355,6 +363,7 @@ fi
 # default (documented in its own header comment) applies otherwise.
 [[ -n "$LLAMA_PORT" ]] && export LLAMA_SERVICE_PORT="$LLAMA_PORT"
 [[ -n "$WHISPER_PORT" ]] && export WHISPER_SERVER_PORT="$WHISPER_PORT"
+[[ -n "$WHISPER_MODEL_FLAG" ]] && export WHISPER_MODEL="$WHISPER_MODEL_FLAG"
 [[ -n "$WYOMING_WHISPER_PORT_FLAG" ]] && export WYOMING_WHISPER_PORT="$WYOMING_WHISPER_PORT_FLAG"
 [[ -n "$PIPER_PORT" ]] && export WYOMING_PIPER_PORT="$PIPER_PORT"
 [[ -n "$BACKUP_API_PORT" ]] && export NANO_BACKUP_API_PORT="$BACKUP_API_PORT"

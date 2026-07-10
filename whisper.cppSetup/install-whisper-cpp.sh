@@ -19,6 +19,16 @@
 # README.md). Override with WHISPER_SERVER_PORT=9000, or via setup.sh:
 # --whisperPort=9000
 #
+# Model: defaults to small.en (a meaningful accuracy upgrade over the old
+# base.en default, confirmed to still run fine under CUDA on the original
+# Nano). If WHISPER_MODEL is set (or via setup.sh: --whisperModel=...), that
+# model is used directly with no prompt - e.g. WHISPER_MODEL=base.en. If
+# it's unset AND an auto-accept flag is active (--bypassAllChecks/
+# --bypassInstallerChecks), small.en is used automatically rather than
+# hanging on a prompt during an unattended run. Otherwise (plain
+# interactive run, nothing set), this asks which model to use and explains
+# the tradeoffs - press Enter for the small.en default, or pick another.
+#
 # If whisper-cpp-server.service already exists, this asks before
 # overwriting it (rebuilding takes several minutes on Jetson Nano). Under
 # setup.sh's --bypassAllChecks/--bypassInstallerChecks, it does NOT
@@ -32,7 +42,6 @@ set -euo pipefail
 WHISPER_DIR="/opt/whisper.cpp"
 WHISPER_VERSION="v1.5.4"
 CUDA_ARCH="sm_53"          # Jetson Nano (original). Orin Nano = sm_87, Xavier = sm_72.
-MODEL="base.en"            # tiny.en / base.en / small.en / medium.en ...
 SERVICE_USER="${SUDO_USER:-$USER}"
 SERVER_PORT="${WHISPER_SERVER_PORT:-8080}"
 
@@ -52,6 +61,56 @@ if [[ -f /etc/systemd/system/whisper-cpp-server.service ]]; then
     y|yes) echo "[*] Proceeding with reinstall..." ;;
     *) echo "Leaving the existing install untouched. Nothing changed."; exit 0 ;;
   esac
+fi
+
+# --- Model selection -------------------------------------------------------
+if [[ -n "${WHISPER_MODEL:-}" ]]; then
+  MODEL="$WHISPER_MODEL"
+  echo "[*] Using model: ${MODEL} (from WHISPER_MODEL)"
+elif [[ "${NANO_SETUP_AUTO_YES:-0}" == "1" || "${NANO_SETUP_AUTO_YES_OS:-0}" == "1" ]]; then
+  # Auto-accept flags are active and no explicit model was requested - use
+  # the recommended default rather than hanging on a prompt during an
+  # unattended run.
+  MODEL="small.en"
+  echo "[*] Auto-accept active - defaulting to model: small.en"
+  echo "    (set WHISPER_MODEL=tiny.en|base.en|small.en|medium.en to pick a"
+  echo "    different one non-interactively next time)"
+else
+  echo "Which whisper.cpp model would you like to use?"
+  echo
+  echo "  1) tiny.en   - Fastest, least accurate (~39M params). Good if"
+  echo "                 snappy responses matter more than getting"
+  echo "                 uncommon words/names right."
+  echo "  2) base.en   - The original default (~74M params). Runs roughly"
+  echo "                 real-time on this hardware, but struggles with"
+  echo "                 less-common vocabulary and proper nouns."
+  echo "  3) small.en  - Recommended. ~3x base.en's size (~244M params)."
+  echo "                 Meaningfully better accuracy on uncommon words"
+  echo "                 and proper nouns, for a real but acceptable"
+  echo "                 speed cost. Confirmed working well with CUDA on"
+  echo "                 the original Nano."
+  echo "  4) medium.en - Best accuracy of these options, but ~3x"
+  echo "                 small.en's size again (~769M params). Likely"
+  echo "                 noticeably slower, and may not comfortably fit"
+  echo "                 in memory alongside llama.cpp/wyoming-piper"
+  echo "                 running at the same time. Only worth trying if"
+  echo "                 small.en's accuracy genuinely isn't enough and"
+  echo "                 you've confirmed you have the memory/speed"
+  echo "                 headroom for it (check 'free -h' with everything"
+  echo "                 else already running)."
+  echo
+  read -rp "Press Enter for the recommended default (small.en), or type a number [1-4]: " MODEL_CHOICE
+  case "$MODEL_CHOICE" in
+    1) MODEL="tiny.en" ;;
+    2) MODEL="base.en" ;;
+    4) MODEL="medium.en" ;;
+    ""|3) MODEL="small.en" ;;
+    *)
+      echo "[!] Unrecognized choice '$MODEL_CHOICE' - defaulting to small.en."
+      MODEL="small.en"
+      ;;
+  esac
+  echo "[*] Using model: ${MODEL}"
 fi
 
 echo "==> [1/7] Installing build dependencies"

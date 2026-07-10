@@ -31,11 +31,27 @@ chmod +x install-whisper-cpp.sh
 ./install-whisper-cpp.sh
 ```
 
-This builds whisper.cpp into `/opt/whisper.cpp`, downloads the `base.en`
-model, and installs+starts a systemd service (`whisper-cpp-server`) serving
-an HTTP transcription API on `127.0.0.1:8080` (override with
-`WHISPER_SERVER_PORT=9000 ./install-whisper-cpp.sh`, or via `setup.sh`:
-`--whisperPort=9000`).
+This builds whisper.cpp into `/opt/whisper.cpp` and installs+starts a
+systemd service (`whisper-cpp-server`) serving an HTTP transcription API on
+`127.0.0.1:8080` (override with `WHISPER_SERVER_PORT=9000
+./install-whisper-cpp.sh`, or via `setup.sh`: `--whisperPort=9000`).
+
+**Model:** defaults to `small.en` - a real, worthwhile accuracy upgrade
+over the original `base.en` default (roughly 3x the parameters), noticeably
+better at uncommon words/names/proper nouns, confirmed to still run fine
+under CUDA on the original Nano. Run the script with no args interactively
+and it'll ask which model to use with a tradeoff description for each
+(`tiny.en` / `base.en` / `small.en` / `medium.en`) - press Enter for the
+`small.en` default, or pick another. Set `WHISPER_MODEL=base.en` (or via
+`setup.sh`: `--whisperModel=base.en`) to skip that prompt and pick a
+specific model non-interactively; under `setup.sh`'s
+`--bypassAllChecks`/`--bypassInstallerChecks` with no `WHISPER_MODEL` set,
+it defaults to `small.en` automatically rather than hanging on a prompt.
+`medium.en` is available but likely to feel noticeably slower and may not
+comfortably fit in memory alongside llama.cpp/wyoming-piper running at the
+same time - only reach for it if `small.en`'s accuracy genuinely isn't
+enough and you've confirmed the headroom (`free -h` with everything else
+already running).
 
 **This is a plain REST endpoint, not the Wyoming protocol.** Home
 Assistant's Wyoming integration expects a Wyoming-protocol TCP service, the
@@ -121,9 +137,12 @@ than relying on this script to fetch it itself.
 The original Nano's Maxwell GPU (128 CUDA cores) is a big step down from
 Orin-series hardware. With CUDA working correctly, `base.en` transcribes
 roughly real-time or a bit better with default (beam search) decoding, and
-noticeably faster with greedy decoding (`--best-of 1`). Larger models
-(`small`, `medium`) are unlikely to feel responsive for interactive use on
-this hardware.
+noticeably faster with greedy decoding (`--best-of 1`, which this script
+always uses). `small.en` (this script's default - see above) is
+confirmed to also run acceptably under CUDA on this hardware, at a real
+but tolerable speed cost over `base.en`. `medium.en` is a much bigger step
+up again and is unlikely to feel responsive for interactive use - see the
+model-selection notes above before reaching for it.
 
 ## Verifying the CUDA build actually works (not silently falling back to CPU)
 
