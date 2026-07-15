@@ -81,7 +81,9 @@ Wyoming-whisper bridge, backup API) at once.
 
 If `llama-cpp-server.service` already exists, running the install script
 again asks before overwriting it (rebuilding means redownloading the CUDA
-binaries and re-fetching the model). Under `setup.sh`'s
+binaries and re-fetching the model). Confirming stops the running service
+first - its `llama-server` binary can't be overwritten while that process
+still has it open (fails with "Text file busy" otherwise). Under `setup.sh`'s
 `--bypassAllChecks`/`--bypassInstallerChecks` it does **not** overwrite
 automatically - it skips and reports "already installed" instead, so
 re-run it directly (without those flags) to be prompted.

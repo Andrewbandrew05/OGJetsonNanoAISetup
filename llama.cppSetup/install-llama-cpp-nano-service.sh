@@ -100,7 +100,13 @@ if [[ -f /etc/systemd/system/llama-cpp-server.service ]]; then
   fi
   read -rp "llama.cpp already appears to be installed. Overwrite/reinstall? [y/N]: " OVERWRITE_CHOICE
   case "${OVERWRITE_CHOICE,,}" in
-    y|yes) echo "[*] Proceeding with reinstall..." ;;
+    y|yes)
+      echo "[*] Proceeding with reinstall..."
+      echo "[*] Stopping llama-cpp-server.service first - its binary can't be"
+      echo "    overwritten while the old process still has it open (fails with"
+      echo "    'Text file busy' otherwise)."
+      sudo systemctl stop llama-cpp-server.service 2>/dev/null || true
+      ;;
     *) echo "Leaving the existing install untouched. Nothing changed."; exit 0 ;;
   esac
 fi
