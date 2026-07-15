@@ -17,6 +17,17 @@ slower on this hardware (memory bandwidth, not just compute, is the real
 bottleneck), so test any swap directly against `llama-cpp-server`'s own
 `/v1/chat/completions` endpoint before assuming it's an improvement.
 
+**Reports a clean model name, not the full cache path.** By default
+`llama-server`'s `/v1/models` endpoint and completion responses report
+whatever's in `-hf` verbatim - an ugly full local file path once it's
+downloaded (e.g. `/home/you/.cache/llama.cpp/Qwen_Qwen2.5-1.5B-Instruct-GGUF_...gguf`).
+The installer passes `--alias` with a clean name derived automatically
+from `MODEL_HF` (e.g. `Qwen2.5-1.5B-Instruct`), so anything you connect to
+this server sees a readable name instead - and it always matches whatever
+model is actually configured, since it's computed from `MODEL_HF` at
+install time rather than hardcoded, so it stays correct if you switch
+models later.
+
 First startup takes a few minutes while the model downloads and converts -
 watch progress with `sudo journalctl -u llama-cpp-server.service -f`.
 

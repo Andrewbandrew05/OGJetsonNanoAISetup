@@ -17,6 +17,12 @@
 # while still fitting comfortably in ~1GB and running at a similar speed on
 # this hardware. Override with: LLAMA_MODEL_HF=some-org/some-model-GGUF
 #
+# The server reports itself via --alias as a clean name derived from
+# MODEL_HF (e.g. "Qwen2.5-1.5B-Instruct" instead of the full local cache
+# file path) in /v1/models and completion responses - this is computed
+# automatically from whatever MODEL_HF is set to, so it always matches
+# without needing a separate manual update if you change models.
+#
 # If llama-cpp-server.service already exists, this asks before overwriting
 # it (rebuilding means redownloading the CUDA binaries and re-fetching the
 # model). Under setup.sh's --bypassAllChecks/--bypassInstallerChecks, it
@@ -51,6 +57,13 @@ SERVICE_USER="${SUDO_USER:-$(whoami)}"
 # server already bound to 127.0.0.1:8080. Override with LLAMA_SERVICE_PORT.
 SERVICE_PORT="${LLAMA_SERVICE_PORT:-8081}"
 MODEL_HF="${LLAMA_MODEL_HF:-Qwen/Qwen2.5-1.5B-Instruct-GGUF}"
+# Clean display name for llama-server's --alias flag, so /v1/models and
+# completion responses report e.g. "Qwen2.5-1.5B-Instruct" instead of the
+# full local cache file path - derived from MODEL_HF so it automatically
+# tracks whatever model is actually configured, current or future.
+MODEL_ALIAS="${MODEL_HF##*/}"
+MODEL_ALIAS="${MODEL_ALIAS%-GGUF}"
+MODEL_ALIAS="${MODEL_ALIAS%-gguf}"
 
 BIND_DIR="/etc/nano-ai-bind"
 MODE_FILE="${BIND_DIR}/llama.mode"
@@ -145,9 +158,9 @@ echo "[llama] Binding to ${BIND_HOST}:__LLAMA_PORT__"
 # Assistant's Extended OpenAI Conversation, for function-calling/device
 # control) - without it llama-server rejects those requests outright with
 # a 500 ("tools param requires --jinja flag") before generating anything.
-exec /usr/local/bin/llama-server -hf __LLAMA_MODEL_HF__ --n-gpu-layers 99 --jinja --host "$BIND_HOST" --port __LLAMA_PORT__
+exec /usr/local/bin/llama-server -hf __LLAMA_MODEL_HF__ --alias "__LLAMA_MODEL_ALIAS__" --n-gpu-layers 99 --jinja --host "$BIND_HOST" --port __LLAMA_PORT__
 WRAPEOF
-sudo sed -i "s|__LLAMA_PORT__|${SERVICE_PORT}|g; s|__LLAMA_MODEL_HF__|${MODEL_HF}|g" "$WRAPPER"
+sudo sed -i "s|__LLAMA_PORT__|${SERVICE_PORT}|g; s|__LLAMA_MODEL_HF__|${MODEL_HF}|g; s|__LLAMA_MODEL_ALIAS__|${MODEL_ALIAS}|g" "$WRAPPER"
 sudo chmod +x "$WRAPPER"
 
 sudo tee /etc/systemd/system/llama-cpp-server.service > /dev/null << EOF
@@ -179,7 +192,7 @@ sudo systemctl start llama-cpp-server.service
 echo ""
 echo "=== Done ==="
 echo "Service installed as: llama-cpp-server.service"
-echo "Model: ${MODEL_HF}"
+echo "Model: ${MODEL_HF} (reports itself as \"${MODEL_ALIAS}\" via --alias)"
 if [[ "$NEW_MODE" == "tailscale" ]]; then
   echo "Bind mode: Tailscale-only (falls back to 127.0.0.1 if tailscale0 isn't up)"
 else
